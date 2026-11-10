@@ -1,0 +1,10 @@
+{
+  "name": "creative-inventory",
+  "private": true,
+  "description": "울산창의융합교육센터 물품·시설 관리 앱",
+  "scripts": {
+    "build": "node -e \"require('fs').copyFileSync('../../docs/inventory/core.js','gas/Core.gs')\"",
+    "test": "npm run build && node test/core.test.js && node test/api.test.js",
+    "ui": "npm run build && node test/ui-smoke.js"
+  }
+}
