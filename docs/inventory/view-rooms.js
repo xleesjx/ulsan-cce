@@ -19,7 +19,7 @@
     var ym = u.m.split('-');
 
     var h = '<div class="page wide"><div class="split">' +
-      '<div class="top"><div class="row between"><h1>대여</h1></div><div class="seg" role="group" aria-label="종류"><button data-act="go" data-to="rentals" aria-pressed="false">교구</button><button class="on" aria-pressed="true">교실</button></div></div>' +
+      '<div class="top"><div class="row between"><h1>교실 대여</h1><button class="btn primary sm" data-act="go" data-to="res/new">+ 교실 예약</button></div></div>' +
       '<div class="left"><div class="col gap8" style="padding:0 12px">' +
       '<div class="row between"><button class="iconbtn" data-act="rmonth" data-d="-1" aria-label="이전 달">' + App.icon('left') + '</button><b style="font-size:17px">' + ym[0] + '년 ' + (+ym[1]) + '월</b><button class="iconbtn" data-act="rmonth" data-d="1" aria-label="다음 달">' + App.icon('right') + '</button></div>' +
       '<div class="row wrap gap8 xs" style="color:var(--soft)">' + rooms.map(function (r) { return '<span><b>' + esc(r.short) + '</b> ' + esc(r.name) + '</span>'; }).join('') + '</div>' +
@@ -33,7 +33,7 @@
       }).join('') + '</div></div></div>' +
       '<div class="paneR"><div class="body" id="rdaylist"></div></div></div></div>' +
       '<button class="fab" data-act="go" data-to="res/new?date=' + u.d + '">+ 교실 예약</button>';
-    return { html: h, tab: 'rentals', after: drawDay };
+    return { html: h, tab: 'rooms', after: drawDay };
   };
 
   function drawDay() {
@@ -69,7 +69,7 @@
 
   App.views.resForm = function (id, route) {
     var v = id ? S.data.reservations.filter(function (x) { return x.id === id; })[0] : null;
-    if (id && !v) return { html: App.appbar('교실 예약', 'rooms') + '<div class="empty">없는 예약입니다.</div>', tab: 'rentals' };
+    if (id && !v) return { html: App.appbar('교실 예약', 'rooms') + '<div class="empty">없는 예약입니다.</div>', tab: 'rooms' };
     var today = App.today(), q = (route && route.q) || {};
     if (v) R = { id: v.id, kind: v.kind, rooms: v.room ? [v.room] : [], date: v.date, start: v.start, end: v.end, purpose: v.purpose, person: v.person, org: v.org, mobile: v.mobile, office: v.office, docNo: v.docNo, note: v.note, docOk: v.docOk, status: v.status };
     else R = { id: '', kind: '외부 대여', rooms: [], date: Core.validDate(q.date) ? q.date : today, start: '', end: '', purpose: '', person: '', org: '', mobile: '', office: '', docNo: '', note: '', docOk: false, status: '확정' };
@@ -84,7 +84,7 @@
       '<div class="grid2"><label class="f">시작<input id="r-start" type="time" value="' + esc(R.start) + '" data-in="rt"></label><label class="f">끝<input id="r-end" type="time" value="' + esc(R.end) + '" data-in="rt"></label></div></div></section>' +
       '<section class="card" id="rfields"></section></form></div>' +
       '<div class="bar-bottom"><div class="in"><button class="btn primary block lg" data-act="ressave">저장</button></div></div>';
-    return { html: h, tab: 'rentals', after: function () { drawKinds(); drawRooms(); drawFields(); } };
+    return { html: h, tab: 'rooms', after: function () { drawKinds(); drawRooms(); drawFields(); } };
   };
 
   function drawKinds() {

@@ -195,4 +195,66 @@ function mk() {
   ok(s.kinds.find((k) => k.name === '센터 수업').count === 2, '종류별 집계');
 })();
 
+/* 센터 프로그램(교구 미리 잡기) */
+(function program() {
+  const d = mk();
+  d.programs = [
+    { id: 'G-2026-001', name: '주말창의', start: '2026-11-21', end: '2026-12-05', item: 'S-001', qty: 18, note: '', status: '확정' },
+    { id: 'G-2026-001', name: '주말창의', start: '2026-11-21', end: '2026-12-05', item: 'S-002', qty: 15, note: '', status: '확정' },
+    { id: 'G-2026-002', name: '취소된 프로그램', start: '2026-11-21', end: '2026-12-05', item: 'C-001', qty: 20, note: '', status: '취소' }
+  ];
+  const idx = Core.makeIndex(d);
+  const drone = d.items[0];
+  eq(Core.progWindow(d.programs[0]), ['2026-11-14', '2026-12-12'], '앞뒤 1주일은 대여 불가 기간');
+  // 11/14 부터 12/12 까지는 드론 18대가 잡혀 있음 (하늘초 10 + 푸른초 12 도 겹침)
+  eq(Core.available(idx, drone, '2026-11-14', '2026-11-14', '', TODAY), 30 - 2 - 18 - 10 - 12, '11/14: 수리 2 + 센터 18 + 하늘초 10 + 푸른초 12 (음수 = 모자람)');
+  eq(Core.available(idx, drone, '2026-11-13', '2026-11-13', '', TODAY), 30 - 2 - 10 - 12, '11/13 은 아직 센터 준비 기간 전(대여 건만 겹침)');
+  eq(Core.available(idx, drone, '2026-12-12', '2026-12-12', '', TODAY), 30 - 2 - 18, '끝난 뒤 1주일(12/12)까지 대여 불가');
+  eq(Core.available(idx, drone, '2026-12-13', '2026-12-13', '', TODAY), 30 - 2, '12/13 부터 다시 대여 가능');
+  eq(Core.available(idx, drone, '2026-11-30', '2026-11-30', '', TODAY, 'G-2026-001'), 30 - 2, '프로그램 자신은 빼고 계산(수정할 때)');
+  eq(Core.available(idx, d.items[2], '2026-11-25', '2026-11-25', '', TODAY), 36, '취소된 프로그램은 수량을 잡지 않음');
+  eq(Core.itemStats(idx, drone, TODAY).prog, 18, '프로그램 수량 표시');
+  // 버퍼 설정을 바꾸면 기간이 달라짐
+  const idx0 = Core.makeIndex(d, { buffer: 0 });
+  eq(Core.available(idx0, drone, '2026-11-14', '2026-11-14', '', TODAY), 30 - 2 - 10 - 12, '여유일 0 이면 센터 프로그램은 11/21 부터');
+  // 외부 대여 검사에 반영
+  const r = Core.checkLines(d, idx, [{ item: 'S-001', qty: 15 }], '2026-11-26', '2026-11-27', '', TODAY);
+  eq(r.short[0].avail, 10 - 0, '센터 프로그램 기간에 외부 대여는 남은 10대만');
+  // 프로그램 등록 검사
+  const c1 = Core.checkProgram(d, idx, [{ item: 'S-002', qty: 15 }], '2026-12-20', '2026-12-26', '', TODAY);
+  eq([c1.errors.length, c1.short.length], [0, 0], '겹침 없으면 통과');
+  const c2 = Core.checkProgram(d, idx, [{ item: 'S-002', qty: 15 }], '2026-12-01', '2026-12-02', 'G-2026-001', TODAY);
+  eq([c2.errors.length, c2.short.length], [0, 0], '자기 자신과는 겹침 아님');
+  const c3 = Core.checkProgram(d, idx, [{ item: 'S-001', qty: 18 }], '2026-12-01', '2026-12-02', '', TODAY);
+  eq(c3.short.length, 1, '이미 다른 프로그램이 잡고 있으면 모자람');
+  ok(Core.checkProgram(d, idx, [{ item: 'S-002', qty: 99 }], '2026-12-20', '2026-12-22', '', TODAY).errors.length === 1, '보유수량보다 많이 못 잡음');
+  ok(Core.checkProgram(d, idx, [{ item: 'P-001', qty: 1 }], '2026-12-20', '2026-12-22', '', TODAY).errors.length === 1, '준비물은 못 잡음');
+  eq(Core.PROG_QTY, 18, '기본 수량 18');
+  // 막고 있는 일정
+  const bl = Core.blockers(d, idx, 'S-001', '2026-11-26', '2026-11-27', TODAY);
+  eq(bl.map((x) => x.kind), ['센터', '수리'], '막고 있는 일정 종류(날짜순, 수리는 맨 뒤)');
+  ok(bl.some((x) => x.kind === '센터' && x.qty === 18) && bl.some((x) => x.kind === '수리' && x.qty === 2), '센터 18 + 수리 2');
+  // 묶기·달력·하루 목록
+  const g = Core.groupPrograms(d.programs);
+  eq([g.length, g[0].items.length], [2, 2], '교구 줄을 프로그램으로 묶음');
+  const m = Core.rentalMonthMarks(d);
+  eq([m['2026-11-07'].out, m['2026-11-14'].ret, m['2026-11-21'].prog[0].edge, m['2026-12-05'].prog[0].edge], [1, 1, 'start', 'end'], '달력 표시: 내주기·반납·프로그램 시작·끝');
+  ok(!m['2026-11-07'].prog.length && !(m['2026-11-20'] || { out: 0 }).out, '취소된 대여는 표시 안 함');
+  eq(Core.dayItems(d, '2026-11-28').map((x) => x.kind + ':' + (x.edge || '')), ['prog:during'], '진행 중인 프로그램은 그 날 목록에 나옴');
+  const b = Core.briefing(d, '2026-11-18', 'all');
+  ok(b.next.some((e) => e.kind === 'program' && e.date === '2026-11-21'), '브리핑 다음 대여에 센터 프로그램 시작');
+})();
+
+/* 정렬 */
+(function sorting() {
+  const items = [
+    { id: 'C-003', cat: '창의교구', name: '하노이탑', loc: '자료실' }, { id: 'S-002', cat: 'SW교구', name: 'Beep Beep', loc: '라온실' },
+    { id: 'C-001', cat: '창의교구', name: '가블리트', loc: '창의실' }, { id: 'S-001', cat: 'SW교구', name: '3D 블로커스', loc: '' },
+    { id: 'C-002', cat: '창의교구', name: ' [신] 나비', loc: '자료실' }, { id: 'T-001', cat: 'SW교재', name: '오조봇 교재', loc: '혜윰실' }
+  ];
+  eq(Core.sortItems(items, 'ko').map((i) => i.name), ['3D 블로커스', 'Beep Beep', '가블리트', ' [신] 나비', '오조봇 교재', '하노이탑'], '가나다순: 숫자·영문 먼저, 앞의 기호·공백은 무시');
+  eq(Core.sortItems(items, 'id').map((i) => i.id), ['C-001', 'C-002', 'C-003', 'S-001', 'S-002', 'T-001'], '관리번호순(분류 순서 → 번호)');
+  eq(Core.sortItems(items, 'loc').map((i) => i.name), ['Beep Beep', ' [신] 나비', '하노이탑', '가블리트', '오조봇 교재', '3D 블로커스'], '위치별: 위치 가나다순, 같은 위치는 이름순, 위치 없음은 맨 뒤');
+})();
+
 console.log('core 테스트 통과: ' + passed + '개');

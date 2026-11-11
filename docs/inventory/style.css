@@ -223,3 +223,43 @@ table.tb td.n, table.tb th.n { text-align: right; }
 .step input::-webkit-outer-spin-button, .step input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .step input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 @media (min-width: 900px) { .top .seg { max-width: 320px; } .top .tabs { max-width: 560px; } }
+
+/* 메뉴가 5칸이라 글자를 조금 줄임 */
+#nav button { font-size: 10.5px; padding: 8px 0; letter-spacing: -0.2px; }
+@media (min-width: 900px) { #nav button { font-size: 12px; } }
+
+/* 브리핑·목록의 줄: 눌러서 열기 + 오른쪽 작은 버튼 */
+.ev .mainbtn { flex: 1; min-width: 0; background: none; border: 0; padding: 0; text-align: left; color: inherit; display: block; }
+.ev .side { flex-shrink: 0; align-self: center; }
+
+/* 물품 보기 방식 */
+.viewbar { display: flex; gap: 8px; align-items: center; }
+.viewbar select { min-height: 36px; border: 1px solid #D0D6DE; border-radius: 10px; padding: 0 8px; background: #fff; font-size: 14px; }
+.viewbar .seg { flex: 1; }
+.viewbar .seg button { min-height: 34px; font-size: 13px; }
+.grp { grid-column: 1 / -1; font-size: 13px; font-weight: 700; color: var(--muted); padding: 10px 4px 2px; background: transparent; }
+.list .grp { padding: 8px 16px; background: #F8FAFC; border-bottom: 1px solid var(--line2); }
+.crow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 6px 16px; background: #fff; border: 0; border-bottom: 1px solid var(--line2); text-align: left; color: inherit; }
+.crow:hover { background: #FAFBFC; }
+.crow .nm { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; }
+.crow .id { font-size: 12px; color: var(--muted); flex-shrink: 0; width: 52px; }
+.crow .qt { font-size: 14px; font-weight: 700; flex-shrink: 0; }
+.crow .qt.low { color: var(--red); } .crow .qt.ok { color: var(--green); }
+.gal { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.gcard { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; padding: 0; text-align: left; color: inherit; display: flex; flex-direction: column; }
+.gcard:hover { border-color: var(--blue); }
+.gph { position: relative; aspect-ratio: 1 / 1; background: #F1F3F6; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
+.gph img { width: 100%; height: 100%; object-fit: contain; background: #fff; display: block; }
+.gbadge { position: absolute; top: 6px; right: 6px; min-width: 24px; height: 22px; padding: 0 7px; border-radius: 11px; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, .94); color: var(--green-ink); box-shadow: 0 1px 3px rgba(15, 23, 42, .2); }
+.gbadge.low { color: var(--red); } .gbadge.zero { background: var(--red); color: #fff; } .gbadge.muted { color: var(--muted); }
+.gname { padding: 8px 10px 10px; font-size: 14px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.9em; }
+@media (min-width: 640px) { .gal { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .gal { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .gal { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+
+/* 교구 대여 달력 */
+.mk.orange { background: var(--orange); }
+.lk summary { cursor: pointer; font-weight: 700; font-size: 15px; min-height: 36px; display: flex; align-items: center; }
+.lkres { border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.lkres.ok { background: var(--green-bg); } .lkres.no { background: var(--red-soft); border: 1px solid var(--red-line); }
+.lkres b.big { font-size: 22px; }

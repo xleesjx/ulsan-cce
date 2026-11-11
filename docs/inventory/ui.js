@@ -8,6 +8,7 @@
     home: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     box: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 4v16"/>',
     swap: '<path d="M7 7h11l-3-3M17 17H6l3 3"/>',
+    cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
     more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     close: '<path d="M6 6l12 12M18 6L6 18"/>',
@@ -27,6 +28,20 @@
   App.icon = function (name, size) {
     var s = size || 22;
     return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (P[name] || '') + '</svg>';
+  };
+
+  /* ───────── 빠른 반응 ───────── */
+  /**
+   * 서버 응답을 기다리지 않고 화면부터 바꿉니다. 저장에 실패하면 되돌리고 알려 줍니다.
+   * mutate: 화면 데이터를 바꾸는 함수, call: 서버에 보내는 함수(Promise), undo: 실패했을 때 되돌리는 함수
+   */
+  App.optimistic = function (mutate, call, undo, okMsg) {
+    mutate(); App.S.v++; App.render();
+    return call().then(function (res) {
+      App.apply(res); if (okMsg) App.toast(okMsg); App.render();
+    }).catch(function (e) {
+      undo(); App.S.v++; App.render(); App.toast(e.message || '저장하지 못했습니다.', true);
+    });
   };
 
   /* ───────── 틀 ───────── */

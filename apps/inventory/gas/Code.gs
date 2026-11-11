@@ -8,7 +8,7 @@
 var TZ = 'Asia/Seoul';
 var SHEET = {
   ITEMS: '물품', RENTALS: '대여', LINES: '대여품목', REPAIRS: '수리', ROOMS: '교실', RES: '교실예약',
-  INSPECT: '점검', STAFF: '직원', SETTINGS: '설정', LOG: '변경기록'
+  INSPECT: '점검', STAFF: '직원', SETTINGS: '설정', LOG: '변경기록', PROG: '센터사용'
 };
 
 /* 시트 칸 구성: [화면에서 쓰는 이름, 시트 맨 윗줄 제목] */
@@ -29,11 +29,13 @@ SCHEMA['교실예약'] = [['id', '예약번호'], ['room', '교실'], ['kind', '
 SCHEMA['점검'] = [['round', '회차'], ['rdate', '회차날짜'], ['target', '대상'], ['kind', '구분'], ['result', '결과'], ['count', '확인수량'], ['note', '메모'], ['by', '점검자'], ['at', '점검시각']];
 SCHEMA['직원'] = [['email', '이메일'], ['name', '이름'], ['role', '역할']];
 SCHEMA['설정'] = [['key', '항목'], ['value', '값'], ['hint', '설명']];
+SCHEMA['센터사용'] = [['id', '번호'], ['name', '프로그램'], ['start', '시작일'], ['end', '끝일'], ['item', '관리번호'], ['qty', '수량'], ['note', '비고'], ['status', '상태'], ['staff', '등록자'], ['createdAt', '등록시각']];
 SCHEMA['변경기록'] = [['at', '시각'], ['who', '직원'], ['action', '작업'], ['target', '대상'], ['detail', '내용']];
 
 var NUM_KEYS = { qty: 1, ok: 1, broken: 1, lost: 1, min: 1, order: 1, count: 1 };
 var BOOL_KEYS = { pub: 1, docOk: 1, priority: 1 };
 var MEMO = {};
+var META = {};
 
 /* ───────── 진입점 ───────── */
 
@@ -43,7 +45,7 @@ function doGet() {
 
 function doPost(e) {
   var out;
-  MEMO = {};
+  MEMO = {}; META = {};
   try {
     var req = JSON.parse(e.postData.contents);
     var user = authenticate_(req.token);
@@ -149,9 +151,21 @@ function table_(name) {
   return MEMO[name];
 }
 
+/** 머리글 한 줄만 읽기: 맨 아래에 줄을 추가할 때 시트 전체를 읽지 않으려고 씁니다 */
+function meta_(name) {
+  if (MEMO[name]) return MEMO[name];
+  if (META[name]) return META[name];
+  var sh = sheet_(name);
+  var header = sh.getRange(1, 1, 1, Math.max(sh.getMaxColumns(), 1)).getValues()[0].map(cellText_);
+  while (header.length && header[header.length - 1] === '') header.pop();
+  var cols = {};
+  header.forEach(function (h, i) { cols[h] = i; });
+  return (META[name] = { header: header, cols: cols });
+}
+
 /** 한 줄 저장 (새 줄이면 맨 아래에 추가) */
 function put_(name, o) {
-  var t = table_(name), sh = sheet_(name), n = Math.max(t.header.length, 1);
+  var t = o._row ? table_(name) : meta_(name), sh = sheet_(name), n = Math.max(t.header.length, 1);
   var row;
   if (o._row) row = sh.getRange(o._row, 1, 1, n).getValues()[0];
   else { row = []; for (var i = 0; i < n; i++) row.push(''); }
@@ -160,7 +174,7 @@ function put_(name, o) {
   var rg = sh.getRange(target, 1, 1, n);
   rg.setNumberFormat('@');
   rg.setValues([row]);
-  if (!o._row) { o._row = target; t.rows.push(o); }
+  if (!o._row) { o._row = target; if (t.rows) t.rows.push(o); else if (MEMO[name]) MEMO[name].rows.push(o); }
   return o;
 }
 
@@ -179,7 +193,7 @@ function rows_(name, keyField) { return table_(name).rows.filter(function (r) { 
 function load_() {
   return {
     items: rows_(SHEET.ITEMS), rentals: rows_(SHEET.RENTALS), lines: rows_(SHEET.LINES, 'rid'), repairs: rows_(SHEET.REPAIRS),
-    rooms: rows_(SHEET.ROOMS, 'name'), reservations: rows_(SHEET.RES)
+    rooms: rows_(SHEET.ROOMS, 'name'), reservations: rows_(SHEET.RES), programs: rows_(SHEET.PROG)
   };
 }
 
@@ -190,7 +204,9 @@ function settings_() {
   return {
     returnDays: parseInt(m['반납기본일수'], 10) || 7,
     maskDays: parseInt(m['연락처보관일수'], 10) || 365,
-    locs: locs, centerName: m['센터이름'] || '울산창의융합교육센터', centerPhone: m['센터전화'] || ''
+    locs: locs, centerName: m['센터이름'] || '울산창의융합교육센터', centerPhone: m['센터전화'] || '',
+    programBuffer: isNaN(parseInt(m['센터사용여유일수'], 10)) ? 7 : Math.max(0, parseInt(m['센터사용여유일수'], 10)),
+    programQty: parseInt(m['센터사용기본수량'], 10) > 0 ? parseInt(m['센터사용기본수량'], 10) : 18
   };
 }
 
@@ -269,16 +285,35 @@ API.rev = function () {
 };
 
 API.boot = function (req, user) {
+  ensureSettings_();
   housekeeping_();
   var d = load_();
   return {
     user: user, today: today_(), settings: settings_(), sheetUrl: ss_().getUrl(),
     rev: PropertiesService.getScriptProperties().getProperty('REV') || '0',
     staff: plainAll_(rows_(SHEET.STAFF, 'email')),
-    items: plainAll_(d.items), rentals: plainAll_(d.rentals), lines: plainAll_(d.lines), repairs: plainAll_(d.repairs),
+    items: plainAll_(d.items), rentals: plainAll_(d.rentals), lines: plainAll_(d.lines), repairs: plainAll_(d.repairs), programs: plainAll_(d.programs),
     rooms: plainAll_(d.rooms).sort(function (a, b) { return a.order - b.order; }), reservations: plainAll_(d.reservations)
   };
 };
+
+/** 새 설정 항목이 시트에 없으면 한 번만 추가합니다 (이전 버전에서 올린 시트를 위해) */
+function ensureSettings_() {
+  var p = PropertiesService.getScriptProperties();
+  if (p.getProperty('SETTINGS_VER') === '2') return;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    var have = {};
+    rows_(SHEET.SETTINGS, 'key').forEach(function (r) { have[r.key] = 1; });
+    [['센터사용기본수량', '18', '센터 프로그램에서 교구마다 기본으로 잡아 둘 수량 (정원 16명 + 여유 2)'],
+      ['센터사용여유일수', '7', '센터 프로그램 앞뒤로 대여를 막는 날 수 (준비·점검 기간)']].forEach(function (r) {
+      if (!have[r[0]]) put_(SHEET.SETTINGS, { key: r[0], value: r[1], hint: r[2] });
+    });
+    p.setProperty('SETTINGS_VER', '2');
+    delete MEMO[SHEET.SETTINGS];
+  } finally { lock.releaseLock(); }
+}
 
 /** 하루에 한 번: 보관 기간이 지난 연락처를 지웁니다 */
 function housekeeping_() {
@@ -339,7 +374,7 @@ function linesOf_(d, rid) { return d.lines.filter(function (l) { return l.rid ==
 function findBy_(rows, key, val) { var f = null; rows.forEach(function (r) { if (r[key] === val) f = r; }); return f; }
 
 function checkOrThrow_(d, lines, start, due, excludeRid, today) {
-  var chk = Core.checkLines(d, Core.makeIndex(d), lines, start, due, excludeRid, today);
+  var chk = Core.checkLines(d, Core.makeIndex(d, { buffer: settings_().programBuffer }), lines, start, due, excludeRid, today);
   if (chk.errors.length) throw apiError_('SHORT', chk.errors.join('\n'), { short: chk.short });
 }
 
@@ -390,7 +425,7 @@ API.rentalEdit = function (req, user) {
 
 API.rentalCancel = function (req, user) {
   return write_(function () {
-    var d = load_(), r = findBy_(d.rentals, 'id', req.id);
+    var r = findBy_(rows_(SHEET.RENTALS), 'id', req.id);
     if (!r) throw bad_('없는 대여 건입니다.');
     if (r.status !== '예약됨') throw bad_('예약 상태인 건만 취소할 수 있습니다.');
     r.status = pickEnum_(req.kind || '취소', ['취소', '미수령'], '취소 종류');
@@ -402,7 +437,7 @@ API.rentalCancel = function (req, user) {
 
 API.rentalDoc = function (req, user) {
   return write_(function () {
-    var d = load_(), r = findBy_(d.rentals, 'id', req.id);
+    var r = findBy_(rows_(SHEET.RENTALS), 'id', req.id);
     if (!r) throw bad_('없는 대여 건입니다.');
     r.docOk = true; r.docNo = s_(req.docNo, 60);
     put_(SHEET.RENTALS, r);
@@ -565,7 +600,7 @@ API.resSave = function (req, user) {
 
 API.resCancel = function (req, user) {
   return write_(function () {
-    var d = load_(), v = findBy_(d.reservations, 'id', req.id);
+    var v = findBy_(rows_(SHEET.RES), 'id', req.id);
     if (!v) throw bad_('없는 예약입니다.');
     v.status = '취소';
     put_(SHEET.RES, v);
@@ -576,12 +611,56 @@ API.resCancel = function (req, user) {
 
 API.resDoc = function (req, user) {
   return write_(function () {
-    var d = load_(), v = findBy_(d.reservations, 'id', req.id);
+    var v = findBy_(rows_(SHEET.RES), 'id', req.id);
     if (!v) throw bad_('없는 예약입니다.');
     v.docOk = true; v.docNo = s_(req.docNo, 60);
     put_(SHEET.RES, v);
     log_(user, '공문 확인', v.id, v.docNo);
     return { reservations: [plain_(v)] };
+  });
+};
+
+/* ----- 센터 프로그램(교구 미리 잡기) ----- */
+
+function progRows_(id) { return rows_(SHEET.PROG).filter(function (r) { return r.id === id; }); }
+
+API.progSave = function (req, user) {
+  return write_(function () {
+    var today = today_(), d = load_(), st = settings_();
+    var name = s_(req.name, 100);
+    if (!name) throw bad_('프로그램 이름을 입력해 주세요.');
+    var start = date_(req.start, '시작'), end = date_(req.end, '끝');
+    if (end < start) throw bad_('끝나는 날이 시작하는 날보다 빨라요.');
+    var lines = normLines_(req.lines).map(function (l) { return { item: l.item, qty: l.qty }; });
+    var pid = req.id ? s_(req.id, 20) : '', old = pid ? progRows_(pid) : [];
+    if (pid && !old.length) throw bad_('없는 프로그램입니다.');
+    if (old.length && old[0].status === '취소') throw bad_('취소된 프로그램은 고칠 수 없습니다.');
+    var chk = Core.checkProgram(d, Core.makeIndex(d, { buffer: st.programBuffer }), lines, start, end, pid, today);
+    if (chk.errors.length) throw bad_(chk.errors.join('\n'));
+    if (chk.short.length && !req.force) {
+      throw apiError_('SHORT', chk.short.map(function (x) { return x.name + ': 앞뒤 ' + st.programBuffer + '일을 포함한 기간에 ' + x.avail + '개만 잡을 수 있어요 (요청 ' + x.want + '개)'; }).join('\n'), { short: chk.short });
+    }
+    var staff = old.length ? old[0].staff : user.name, createdAt = old.length ? old[0].createdAt : Core.nowStr();
+    removeRows_(SHEET.PROG, old);
+    d.programs = rows_(SHEET.PROG);
+    var id = pid || Core.nextYearId('G', start.slice(0, 4), d.programs.map(function (r) { return r.id; }));
+    lines.forEach(function (l) {
+      put_(SHEET.PROG, { id: id, name: name, start: start, end: end, item: l.item, qty: l.qty, note: s_(req.note, 300), status: '확정', staff: staff, createdAt: createdAt });
+    });
+    log_(user, pid ? '센터 프로그램 수정' : '센터 프로그램 등록', id, name + ' ' + start + '~' + end);
+    var pf = {}; pf[id] = plainAll_(progRows_(id));
+    return { programsFor: pf, programId: id };
+  });
+};
+
+API.progCancel = function (req, user) {
+  return write_(function () {
+    var rows = progRows_(s_(req.id, 20));
+    if (!rows.length) throw bad_('없는 프로그램입니다.');
+    rows.forEach(function (r) { r.status = '취소'; put_(SHEET.PROG, r); });
+    log_(user, '센터 프로그램 취소', rows[0].id, rows[0].name);
+    var pf = {}; pf[rows[0].id] = plainAll_(rows);
+    return { programsFor: pf };
   });
 };
 
@@ -675,6 +754,8 @@ function setupSheets() {
       ['센터전화', '', '공개 목록 아래에 보여 줄 전화번호']]
       .forEach(function (r) { put_(SHEET.SETTINGS, { key: r[0], value: r[1], hint: r[2] }); });
   }
+  PropertiesService.getScriptProperties().deleteProperty('SETTINGS_VER');
+  ensureSettings_();
   if (!rows_(SHEET.STAFF, 'email').length) {
     var me = '';
     try { me = Session.getEffectiveUser().getEmail(); } catch (e) { me = ''; }

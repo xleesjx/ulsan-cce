@@ -94,9 +94,13 @@ var Core = (function () {
 
   function outstanding(l) { return Math.max(0, int(l.qty) - int(l.ok) - int(l.broken) - int(l.lost)); }
 
-  /** 수량 계산용 색인: 대여 건을 한 번만 훑어서 만듭니다 */
-  function makeIndex(data) {
-    var rmap = {}, byItem = {}, repair = {};
+  /** 센터 프로그램 기본값: 정원 16명 + 여유 2 = 18개, 앞뒤 1주일은 준비·점검 기간 */
+  var PROG_QTY = 18, PROG_BUFFER = 7;
+
+  /** 수량 계산용 색인: 대여 건·센터 프로그램을 한 번만 훑어서 만듭니다 */
+  function makeIndex(data, opts) {
+    var buffer = opts && opts.buffer !== undefined ? opts.buffer : PROG_BUFFER;
+    var rmap = {}, byItem = {}, repair = {}, prog = {};
     data.rentals.forEach(function (r) { rmap[r.id] = r; });
     data.lines.forEach(function (l) {
       var r = rmap[l.rid];
@@ -108,7 +112,12 @@ var Core = (function () {
     data.repairs.forEach(function (x) {
       if (x.kind === '고장' && x.status === '대기') repair[x.item] = (repair[x.item] || 0) + int(x.qty);
     });
-    return { rmap: rmap, byItem: byItem, repair: repair };
+    (data.programs || []).forEach(function (p) {
+      var q = int(p.qty);
+      if (p.status === '취소' || q <= 0 || !validDate(p.start) || !validDate(p.end)) return;
+      (prog[p.item] = prog[p.item] || []).push({ p: p, qty: q, win: [addDays(p.start, -buffer), addDays(p.end, buffer)] });
+    });
+    return { rmap: rmap, byItem: byItem, repair: repair, prog: prog, buffer: buffer };
   }
 
   /** 이 대여 건이 물품을 쓰고 있는(또는 쓸) 기간. 연체 중이면 오늘까지로 봅니다 */
@@ -118,28 +127,33 @@ var Core = (function () {
     return [r.start, e];
   }
 
-  function held(idx, itemId, from, to, excludeRid, today) {
+  function held(idx, itemId, from, to, excludeRid, today, excludePid) {
     var sum = 0;
     (idx.byItem[itemId] || []).forEach(function (e) {
       if (e.r.id === excludeRid) return;
       var w = holdWindow(e.r, today);
       if (w[0] <= to && from <= w[1]) sum += e.qty;
     });
+    (idx.prog[itemId] || []).forEach(function (e) {
+      if (excludePid && e.p.id === excludePid) return;
+      if (e.win[0] <= to && from <= e.win[1]) sum += e.qty;
+    });
     return sum;
   }
 
   /** from~to 기간에 빌려줄 수 있는 수량 */
-  function available(idx, item, from, to, excludeRid, today) {
-    return int(item.qty) - (idx.repair[item.id] || 0) - held(idx, item.id, from, to, excludeRid, today);
+  function available(idx, item, from, to, excludeRid, today, excludePid) {
+    return int(item.qty) - (idx.repair[item.id] || 0) - held(idx, item.id, from, to, excludeRid, today, excludePid);
   }
 
   function itemStats(idx, item, today) {
-    var out = 0, res = 0;
+    var out = 0, res = 0, prog = 0;
     (idx.byItem[item.id] || []).forEach(function (e) {
       if (e.r.status === '대여중') out += e.qty;
       else if (e.r.due >= today) res += e.qty;
     });
-    return { total: int(item.qty), out: out, reserved: res, repair: idx.repair[item.id] || 0, avail: available(idx, item, today, today, '', today) };
+    (idx.prog[item.id] || []).forEach(function (e) { if (e.win[1] >= today) prog += e.qty; });
+    return { total: int(item.qty), out: out, reserved: res, prog: prog, repair: idx.repair[item.id] || 0, avail: available(idx, item, today, today, '', today) };
   }
 
   /** 대여할 품목 검사. 문제가 있으면 errors 에 한국어 문장을 담아 돌려줍니다 */
@@ -162,6 +176,124 @@ var Core = (function () {
       }
     });
     return { errors: errors, short: short };
+  }
+
+  /* ───────── 센터 프로그램(교구 미리 잡기) ───────── */
+
+  /** 프로그램 기간(앞뒤 여유일 포함): 이 기간에는 잡아 둔 교구를 대여할 수 없습니다 */
+  function progWindow(p, buffer) {
+    var b = buffer === undefined ? PROG_BUFFER : buffer;
+    return [addDays(p.start, -b), addDays(p.end, b)];
+  }
+
+  /** 프로그램 줄(교구마다 한 줄)을 프로그램 단위로 묶기 */
+  function groupPrograms(rows) {
+    var map = {}, order = [];
+    (rows || []).forEach(function (r) {
+      var g = map[r.id];
+      if (!g) { g = map[r.id] = { id: r.id, name: r.name, start: r.start, end: r.end, note: r.note, status: r.status, staff: r.staff, createdAt: r.createdAt, items: [] }; order.push(r.id); }
+      g.items.push({ item: r.item, qty: int(r.qty) });
+    });
+    return order.map(function (k) { return map[k]; });
+  }
+
+  /** 프로그램에 잡을 교구 검사 (가능 수량이 모자라면 short 에 담음) */
+  function checkProgram(data, idx, lines, start, end, excludePid, today) {
+    var errors = [], short = [], seen = {}, imap = {};
+    data.items.forEach(function (i) { imap[i.id] = i; });
+    var w = progWindow({ start: start, end: end }, idx.buffer);
+    if (!lines || !lines.length) errors.push('잡아 둘 교구를 한 가지 이상 골라 주세요.');
+    (lines || []).forEach(function (l) {
+      var it = imap[l.item], q = int(l.qty);
+      if (!it) { errors.push('없는 물품입니다: ' + l.item); return; }
+      if (seen[l.item]) { errors.push(it.name + '이(가) 두 번 들어 있습니다.'); return; }
+      seen[l.item] = 1;
+      if (!isRentable(it)) { errors.push(it.name + '은(는) 대여용 교구가 아닙니다.'); return; }
+      if (q <= 0) { errors.push(it.name + ' 수량을 1개 이상으로 해 주세요.'); return; }
+      if (q > int(it.qty)) { errors.push(it.name + ': 보유수량(' + int(it.qty) + '개)보다 많이 잡을 수 없어요.'); return; }
+      var av = available(idx, it, w[0], w[1], '', today, excludePid);
+      if (q > av) short.push({ item: it.id, name: it.name, want: q, avail: Math.max(0, av) });
+    });
+    return { errors: errors, short: short };
+  }
+
+  /** 이 교구를 from~to 에 막고 있는 일정(대여·센터 프로그램·수리) */
+  function blockers(data, idx, itemId, from, to, today) {
+    var out = [];
+    (idx.byItem[itemId] || []).forEach(function (e) {
+      var w = holdWindow(e.r, today);
+      if (w[0] <= to && from <= w[1]) out.push({ kind: '대여', id: e.r.id, title: e.r.school + ' · ' + e.r.teacher, qty: e.qty, from: w[0], to: w[1], status: e.r.status });
+    });
+    (idx.prog[itemId] || []).forEach(function (e) {
+      if (e.win[0] <= to && from <= e.win[1]) out.push({ kind: '센터', id: e.p.id, title: e.p.name, qty: e.qty, from: e.win[0], to: e.win[1], status: '확정' });
+    });
+    if (idx.repair[itemId]) out.push({ kind: '수리', id: '', title: '수리 대기', qty: idx.repair[itemId], from: '', to: '', status: '' });
+    return out.sort(function (a, b) { return (a.from || '9').localeCompare(b.from || '9'); });
+  }
+
+  /** 교구 대여 달력 표시: 날짜 → { out: 내주기 건수, ret: 반납 건수, prog: [{id,name,edge}] } */
+  function rentalMonthMarks(data) {
+    var m = {};
+    function at(d) { return m[d] || (m[d] = { out: 0, ret: 0, prog: [] }); }
+    data.rentals.forEach(function (r) {
+      if (r.status === '취소' || r.status === '미수령') return;
+      if (validDate(r.start)) at(r.start).out++;
+      if (validDate(r.due)) at(r.due).ret++;
+    });
+    groupPrograms(data.programs).forEach(function (g) {
+      if (g.status === '취소' || !validDate(g.start) || !validDate(g.end)) return;
+      at(g.start).prog.push({ id: g.id, name: g.name, edge: 'start' });
+      if (g.end !== g.start) at(g.end).prog.push({ id: g.id, name: g.name, edge: 'end' });
+    });
+    return m;
+  }
+
+  /** 하루치 목록: 내주기·반납 건과, 그날 진행 중인 센터 프로그램 */
+  function dayItems(data, date) {
+    var out = [];
+    data.rentals.forEach(function (r) {
+      if (r.status === '취소' || r.status === '미수령') return;
+      if (r.start === date) out.push({ kind: 'out', r: r });
+      if (r.due === date && r.start !== date) out.push({ kind: 'ret', r: r });
+      else if (r.due === date) out.push({ kind: 'ret', r: r });
+    });
+    groupPrograms(data.programs).forEach(function (g) {
+      if (g.status === '취소' || !validDate(g.start) || !validDate(g.end)) return;
+      if (g.start <= date && date <= g.end) out.push({ kind: 'prog', g: g, edge: g.start === date ? 'start' : g.end === date ? 'end' : 'during' });
+    });
+    return out;
+  }
+
+  /* ───────── 물품 정렬 ───────── */
+
+  var collator = typeof Intl !== 'undefined' ? new Intl.Collator('en', { numeric: true, sensitivity: 'base' }) : null;
+  function sortKey(name) { return str(name).replace(/^[^0-9A-Za-z가-힣]+/, ''); }
+  /** 엑셀 원본과 같은 순서: 숫자로 시작 → 영문 → 한글(가나다) → 그 밖. 기기마다 달라지지 않게 직접 정합니다 */
+  function rankOf(s) {
+    var c = s.charAt(0);
+    if (/[0-9]/.test(c)) return 0;
+    if (/[A-Za-z]/.test(c)) return 1;
+    if (/[가-힣]/.test(c)) return 2;
+    return 3;
+  }
+  function cmpKo(a, b) {
+    var x = sortKey(a), y = sortKey(b), rx = rankOf(x), ry = rankOf(y);
+    if (rx !== ry) return rx - ry;
+    if (rx <= 1 && collator) return collator.compare(x, y);
+    x = x.toLowerCase(); y = y.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : 0; // 한글 글자는 코드값 순서가 곧 가나다 순서입니다
+  }
+  /** mode: 'ko' 가나다순 · 'id' 관리번호순 · 'loc' 보관위치별(위치 안에서 가나다순) */
+  function sortItems(items, mode) {
+    var list = items.slice();
+    if (mode === 'id') {
+      list.sort(function (a, b) { return CATS.indexOf(a.cat) - CATS.indexOf(b.cat) || a.id.localeCompare(b.id); });
+    } else if (mode === 'loc') {
+      list.sort(function (a, b) { return cmpKo(a.loc || '힣', b.loc || '힣') || cmpKo(a.name, b.name); });
+    } else {
+      list.sort(function (a, b) { return cmpKo(a.name, b.name) || a.id.localeCompare(b.id); });
+    }
+    return list;
   }
 
   /* ───────── 대여 건 ───────── */
@@ -290,6 +422,13 @@ var Core = (function () {
       else if (v.date > today) next.push(ev);
     });
 
+    groupPrograms(data.programs).forEach(function (g) {
+      if (!want('교구') || g.status === '취소' || !validDate(g.start)) return;
+      var ev = { type: '교구', kind: 'program', id: g.id, title: g.name, sub: '센터 프로그램 · 교구 ' + g.items.length + '종 · ' + shortDate(g.start) + ' ~ ' + shortDate(g.end), date: g.start, order: 4 };
+      if (g.start === today) todayEv.push(ev);
+      else if (g.start > today) next.push(ev);
+    });
+
     docs.sort(function (a, b) { return a.days - b.days; });
     todayEv.sort(function (a, b) { return a.order - b.order || (a.time || '').localeCompare(b.time || ''); });
     next.sort(function (a, b) { return a.date.localeCompare(b.date) || a.order - b.order || (a.time || '').localeCompare(b.time || ''); });
@@ -378,6 +517,8 @@ var Core = (function () {
     makeIndex: makeIndex, holdWindow: holdWindow, available: available, itemStats: itemStats, checkLines: checkLines,
     dueInfo: dueInfo, linesSummary: linesSummary, dayLabel: dayLabel,
     resRange: resRange, roomConflicts: roomConflicts, timeLabel: timeLabel, monthGrid: monthGrid, addMonths: addMonths, dayMarks: dayMarks,
+    PROG_QTY: PROG_QTY, PROG_BUFFER: PROG_BUFFER, progWindow: progWindow, groupPrograms: groupPrograms, checkProgram: checkProgram, blockers: blockers,
+    rentalMonthMarks: rentalMonthMarks, dayItems: dayItems, cmpKo: cmpKo, sortItems: sortItems,
     briefing: briefing, needsMaskRental: needsMaskRental, needsMaskRes: needsMaskRes, fmtPhone: fmtPhone, stats: stats, toCsv: toCsv
   };
 })();

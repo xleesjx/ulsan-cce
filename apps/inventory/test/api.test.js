@@ -267,4 +267,86 @@ let V1;
   eq(boot().items.length, t + 1, '추가 확인');
 })();
 
+/* 13. 센터 프로그램(교구 미리 잡기) — 새 시트로 처음부터 */
+(function programs() {
+  const e = createEnv({ now: new Date('2026-11-06T10:00:00+09:00') });
+  e.ctx.setupSheets();
+  const c = (a, p) => e.call(a, p);
+  const g = (a, p) => { const r = c(a, p); assert.ok(r.ok, a + ' 실패: ' + JSON.stringify(r)); return r; };
+  const no = (a, p, code) => { const r = c(a, p); assert.ok(!r.ok, a + ' 이(가) 성공하면 안 됨'); if (code) assert.strictEqual(r.code, code, JSON.stringify(r)); passed++; return r; };
+  const drone = g('itemSave', { item: { cat: 'SW교구', name: '텔로에듀 드론', qty: 30 } }).items[0];
+  const oz = g('itemSave', { item: { cat: 'SW교구', name: '오조봇 evo', qty: 15 } }).items[0];
+  const pen = g('itemSave', { item: { cat: '기본준비물', name: '색연필', qty: 100 } }).items[0];
+  const b0 = g('boot');
+  eq([b0.settings.programBuffer, b0.settings.programQty], [7, 18], '센터 프로그램 기본 설정: 앞뒤 7일, 기본 18개');
+  eq(b0.programs, [], '처음에는 프로그램 없음');
+
+  const P = { name: '주말창의', start: '2026-11-21', end: '2026-12-05', note: '하반기 10회', lines: [{ item: drone.id, qty: 18 }, { item: oz.id, qty: 15 }] };
+  const s1 = g('progSave', P);
+  eq([s1.programId, s1.programsFor['G-2026-001'].length, s1.programsFor['G-2026-001'][0].status], ['G-2026-001', 2, '확정'], '프로그램 등록 (교구마다 한 줄)');
+  eq(g('boot').programs.length, 2, '불러오기에 포함');
+
+  // 프로그램 기간(앞뒤 1주일)에는 외부 대여 불가
+  const mkR = (start, due, qty, item) => ({ school: '가나초등학교', teacher: '홍길동', phone: '', start, due, lines: [{ item: item || drone.id, qty }] });
+  eq(no('rentalCreate', mkR('2026-11-25', '2026-11-26', 15), 'SHORT').extra.short[0].avail, 12, '11/25: 드론 30 - 센터 18 = 12대만 가능');
+  g('rentalCreate', mkR('2026-11-25', '2026-11-26', 12));
+  eq(no('rentalCreate', mkR('2026-11-14', '2026-11-14', 13), 'SHORT').extra.short[0].avail, 12, '시작 1주 전(11/14)부터 막힘');
+  g('rentalCreate', mkR('2026-11-13', '2026-11-13', 30));
+  eq(no('rentalCreate', mkR('2026-12-12', '2026-12-12', 13), 'SHORT').extra.short[0].avail, 12, '끝난 뒤 1주일(12/12)까지 막힘');
+  g('rentalCreate', mkR('2026-12-13', '2026-12-13', 30));
+
+  // 다른 프로그램과 겹쳐 모자라면 확인을 받고, 확인하면 저장
+  const P2 = { name: '방학 프로그램', start: '2026-12-01', end: '2026-12-02', lines: [{ item: drone.id, qty: 18 }] };
+  const sh = no('progSave', P2, 'SHORT');
+  ok(sh.extra.short[0].avail < 18, '겹쳐서 모자람을 알려 줌: ' + sh.error);
+  const f2 = g('progSave', Object.assign({}, P2, { force: true }));
+  eq(f2.programId, 'G-2026-002', '확인하고 저장하면 다음 번호');
+
+  // 수정: 같은 번호, 줄이 바뀜
+  no('progSave', { id: 'G-2026-001', name: '주말창의(수정)', start: '2026-11-21', end: '2026-12-05', lines: [{ item: drone.id, qty: 18 }] }, 'SHORT'); // 다른 프로그램과 겹쳐 확인 필요
+  const ed = g('progSave', { id: 'G-2026-001', name: '주말창의(수정)', start: '2026-11-21', end: '2026-12-05', lines: [{ item: drone.id, qty: 18 }], force: true });
+  eq([ed.programsFor['G-2026-001'].length, ed.programsFor['G-2026-001'][0].name], [1, '주말창의(수정)'], '수정하면 교구 줄이 새로 바뀜');
+  eq(g('boot').programs.filter((r) => r.id === 'G-2026-001').length, 1, '시트에서도 중복 없이 한 줄');
+  eq(g('boot').programs.find((r) => r.id === 'G-2026-001').createdAt.length > 0, true, '등록 정보 유지');
+
+  // 입력 검사
+  no('progSave', Object.assign({}, P, { name: '' }), 'INVALID');
+  no('progSave', Object.assign({}, P, { end: '2026-11-01' }), 'INVALID');
+  no('progSave', Object.assign({}, P, { start: '2026-02-30' }), 'INVALID');
+  no('progSave', Object.assign({}, P, { lines: [{ item: oz.id, qty: 16 }] }), 'INVALID'); // 보유 15 보다 많음
+  no('progSave', Object.assign({}, P, { lines: [{ item: pen.id, qty: 1 }] }), 'INVALID');
+  no('progSave', Object.assign({}, P, { lines: [] }), 'INVALID');
+  no('progSave', Object.assign({}, P, { id: 'G-9999-001' }), 'INVALID');
+
+  // 취소하면 수량이 풀림
+  const cn = g('progCancel', { id: 'G-2026-002' });
+  eq(cn.programsFor['G-2026-002'][0].status, '취소', '프로그램 취소');
+  no('progCancel', { id: 'G-9999-001' }, 'INVALID');
+  no('progSave', Object.assign({}, P2, { id: 'G-2026-002', force: true }), 'INVALID'); // 취소된 것은 못 고침
+
+  // 설정의 여유일을 0으로 바꾸면 준비·점검 기간이 사라짐
+  const sheet = e.sheets['설정'].data();
+  sheet.find((r) => r[0] === '센터사용여유일수')[1] = '0';
+  eq(g('boot').settings.programBuffer, 0, '설정 탭에서 여유일 변경');
+  g('rentalCreate', mkR('2026-11-14', '2026-11-14', 13)); // 이제 11/14 는 막히지 않음
+  ok(e.table('변경기록').length >= 8, '프로그램 작업도 변경 기록에 남음');
+})();
+
+/* 14. 이전 버전 시트 업그레이드: [센터사용] 탭과 새 설정 항목이 없어도 자동으로 만들어짐 */
+(function upgrade() {
+  const e = createEnv({ now: new Date('2026-11-06T10:00:00+09:00') });
+  e.ctx.setupSheets();
+  delete e.sheets['센터사용'];
+  const st = e.sheets['설정'].data();
+  e.sheets['설정'].data().splice(st.findIndex((r) => r[0] === '센터사용기본수량'), 2);
+  delete e.props.SETTINGS_VER;
+  const r = e.call('boot');
+  ok(r.ok && r.settings.programQty === 18 && r.settings.programBuffer === 7, '새 설정은 기본값으로 동작: ' + JSON.stringify(r.error || ''));
+  ok(e.sheets['센터사용'] && e.table('센터사용')[0][1] === '프로그램', '[센터사용] 탭이 자동으로 생김');
+  ok(e.table('설정').some((x) => x[0] === '센터사용기본수량') && e.table('설정').some((x) => x[0] === '센터사용여유일수'), '설정 탭에 새 항목이 추가됨');
+  const n = e.table('설정').length;
+  e.call('boot');
+  eq(e.table('설정').length, n, '다시 불러와도 중복으로 추가되지 않음');
+})();
+
 console.log('api 테스트 통과: ' + passed + '개');

@@ -4,14 +4,43 @@
   var App = window.App, esc = App.esc, S = App.S;
   var PAGE = 80;
 
-  function ui() { return S.ui.it || (S.ui.it = { cat: 'all', q: '', loc: '', grade: '', status: '사용', n: PAGE }); }
+  /** 고른 정렬·보기 방식은 이 기기에 기억해 둡니다 */
+  function pref(k, def, allowed) {
+    try { var v = localStorage.getItem('ci-' + k); return allowed.indexOf(v) >= 0 ? v : def; } catch (e) { return def; }
+  }
+  function savePref(k, v) { try { localStorage.setItem('ci-' + k, v); } catch (e) { /* 무시 */ } }
+  function ui() {
+    return S.ui.it || (S.ui.it = { cat: 'all', q: '', loc: '', grade: '', status: '사용', n: PAGE, sort: pref('sort', 'ko', ['ko', 'id', 'loc']), view: pref('view', 'list', ['list', 'line', 'gal']) });
+  }
 
   function filtered() {
     var u = ui();
     return S.data.items.filter(function (it) {
       return (u.cat === 'all' || it.cat === u.cat) && (!u.loc || it.loc === u.loc) && (!u.grade || it.grade === u.grade) &&
         (u.status === 'all' || it.status === u.status) && (!u.q || Core.matchKo(u.q, it.name + ' ' + it.id));
-    }).sort(function (a, b) { return Core.CATS.indexOf(a.cat) - Core.CATS.indexOf(b.cat) || a.id.localeCompare(b.id); });
+    });
+  }
+
+  /** 수량 표시 정보: 대여용은 '가능 수', 그 밖은 '보유 수' */
+  function qtyInfo(it) {
+    if (Core.isRentable(it)) {
+      var st = Core.itemStats(App.idx(), it, App.today());
+      return { rentable: true, st: st, n: Math.max(0, st.avail), total: st.total, cls: st.avail <= 0 ? 'zero' : st.avail < st.total / 3 ? 'low' : 'ok' };
+    }
+    var low = it.cat === '기본준비물' && it.min && it.qty < it.min;
+    return { rentable: false, n: it.qty, total: it.qty, cls: low ? 'low' : 'muted', low: low };
+  }
+
+  function lineRow(it) {
+    var q = qtyInfo(it);
+    return '<button class="crow" data-act="go" data-to="item/' + esc(it.id) + '"><span class="id">' + esc(it.id) + '</span><span class="nm ellip">' + esc(it.name) + '</span>' +
+      (it.status === '폐기' ? '<span class="chip gray">폐기</span>' : '') + '<span class="qt ' + (q.rentable ? (q.cls === 'ok' ? 'ok' : 'low') : (q.low ? 'low' : '')) + '">' + (q.rentable ? q.n + '/' + q.total : q.n) + '</span></button>';
+  }
+
+  function galCard(it) {
+    var q = qtyInfo(it), src = App.photoSrc(it);
+    var badge = it.status === '폐기' ? '<span class="gbadge muted">폐기</span>' : '<span class="gbadge ' + (q.cls === 'ok' ? '' : q.cls) + '" title="' + (q.rentable ? '가능 ' + q.n + ' / 보유 ' + q.total : '보유 ' + q.n) + '">' + q.n + '</span>';
+    return '<button class="gcard" data-act="go" data-to="item/' + esc(it.id) + '"><div class="gph">' + (src ? '<img src="' + esc(src) + '" alt="" loading="lazy" onerror="this.replaceWith(document.createTextNode(\'사진 없음\'))">' : '사진 없음') + badge + '</div><div class="gname">' + esc(it.name) + '</div></button>';
   }
 
   function row(it) {
@@ -38,8 +67,19 @@
   function drawList() {
     var box = document.getElementById('ilist'), cnt = document.getElementById('icount');
     if (!box) return;
-    var u = ui(), all = filtered(), shown = all.slice(0, u.n);
-    box.innerHTML = shown.length ? '<div class="list">' + shown.map(row).join('') + '</div>' : '<div class="empty">조건에 맞는 물품이 없습니다.</div>';
+    var u = ui(), all = Core.sortItems(filtered(), u.sort), shown = all.slice(0, u.n);
+    var render = u.view === 'gal' ? galCard : u.view === 'line' ? lineRow : row;
+    var html = '', last = null, counts = {};
+    if (u.sort === 'loc') all.forEach(function (it) { var k = it.loc || '위치 없음'; counts[k] = (counts[k] || 0) + 1; });
+    shown.forEach(function (it) {
+      if (u.sort === 'loc') {
+        var k = it.loc || '위치 없음';
+        if (k !== last) { last = k; html += '<div class="grp">' + esc(k) + ' (' + counts[k] + ')</div>'; }
+      }
+      html += render(it);
+    });
+    if (!shown.length) html = '';
+    box.innerHTML = shown.length ? '<div class="' + (u.view === 'gal' ? 'gal' : 'list') + '">' + html + '</div>' : '<div class="empty">조건에 맞는 물품이 없습니다.</div>';
     if (all.length > shown.length) box.innerHTML += '<button class="btn mt12" style="width:100%" data-act="moreitems">더 보기 (' + (all.length - shown.length) + '개 더 있어요)</button>';
     if (cnt) cnt.textContent = all.length + '개';
   }
@@ -63,6 +103,8 @@
       '<div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr))"><label class="f"><span class="xs">위치</span><select data-ch="ifilter" data-k="loc">' + options(locs, u.loc, '전체') + '</select></label>' +
       '<label class="f"><span class="xs">학년</span><select data-ch="ifilter" data-k="grade">' + options(grades, u.grade, '전체') + '</select></label>' +
       '<label class="f"><span class="xs">상태</span><select data-ch="ifilter" data-k="status"><option value="사용"' + (u.status === '사용' ? ' selected' : '') + '>사용 중</option><option value="폐기"' + (u.status === '폐기' ? ' selected' : '') + '>폐기</option><option value="all"' + (u.status === 'all' ? ' selected' : '') + '>전체</option></select></label></div>' +
+      '<div class="viewbar"><select data-ch="isort" aria-label="정렬">' + [['ko', '가나다순'], ['id', '관리번호순'], ['loc', '위치별']].map(function (o) { return '<option value="' + o[0] + '"' + (u.sort === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
+      '<div class="seg" role="group" aria-label="보기 방식">' + [['list', '목록'], ['line', '한 줄'], ['gal', '갤러리']].map(function (o) { return '<button data-act="iview" data-v="' + o[0] + '" class="' + (u.view === o[0] ? 'on' : '') + '" aria-pressed="' + (u.view === o[0]) + '">' + o[1] + '</button>'; }).join('') + '</div></div>' +
       '<div class="row between"><span class="small muted" id="icount"></span><button class="btn sm" data-act="itemcsv">' + App.icon('down', 16) + ' 목록표 내려받기</button></div></div>' +
       '<div class="body"><div id="ilist"></div></div></div>';
     return { html: h, tab: 'items', after: drawList };
@@ -70,11 +112,13 @@
 
   App.acts.icat = function (el) { var u = ui(); u.cat = el.getAttribute('data-v'); u.n = PAGE; App.render(); };
   App.acts.moreitems = function () { ui().n += PAGE; drawList(); };
+  App.acts.iview = function (el) { var u = ui(); u.view = el.getAttribute('data-v'); u.n = PAGE; savePref('view', u.view); App.render(); };
+  App.chs.isort = function (el) { var u = ui(); u.sort = el.value; u.n = PAGE; savePref('sort', u.sort); drawList(); };
   App.ins.iq = function (el) { var u = ui(); u.q = el.value; u.n = PAGE; drawList(); };
   App.chs.ifilter = function (el) { var u = ui(); u[el.getAttribute('data-k')] = el.value; u.n = PAGE; drawList(); };
   App.acts.itemcsv = function () {
     var rows = [['관리번호', '분류', '품명', '대상학년', '영역', '구입연도', '보유수량', '보관위치', '세부위치', '상태', '외부공개', '호응', '설명', '비고']];
-    filtered().forEach(function (i) { rows.push([i.id, i.cat, i.name, i.grade, i.area, i.year, i.qty, i.loc, i.subloc, i.status, i.pub ? '공개' : '', i.like, i.desc, i.note]); });
+    Core.sortItems(filtered(), ui().sort).forEach(function (i) { rows.push([i.id, i.cat, i.name, i.grade, i.area, i.year, i.qty, i.loc, i.subloc, i.status, i.pub ? '공개' : '', i.like, i.desc, i.note]); });
     App.download('물품목록_' + App.today() + '.csv', rows);
   };
 

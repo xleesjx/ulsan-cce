@@ -44,6 +44,7 @@ function makeSheet(name) {
     },
     setFrozenRows: () => {},
     getMaxRows: () => Math.max(1000, data.length),
+    getMaxColumns: () => Math.max(26, ...data.map((r) => r.length)),
     getLastRow: () => {
       for (let i = data.length - 1; i >= 0; i--) if (data[i].some((c) => c !== '' && c !== null && c !== undefined)) return i + 1;
       return 0;

@@ -112,6 +112,21 @@ async function draw(page) {
   ok(!/연체/.test(await page.textContent('#view .body')) || true, '교실만 보기');
   ok((await page.textContent('#view')).indexOf('교구 내주기') < 0, '교실만 보면 교구 건이 안 보임');
   await page.click('[data-act=bf][data-v=all]');
+  ok(await page.locator('#nav button').count() === 5, '아래 메뉴가 5칸');
+  ok((await page.locator('#nav').textContent()).replace(/\s+/g, '') === '브리핑물품대장교구대여교실대여더보기'.replace(/\s+/g, '') || /물품대장/.test(await page.textContent('#nav')) && /교구대여/.test(await page.textContent('#nav')) && /교실대여/.test(await page.textContent('#nav')), '메뉴 이름');
+
+  // 1-2. 브리핑에서 교실 예약 취소 (누르는 즉시 화면에서 사라지고, 서버에도 반영)
+  const rowOh = page.locator('.ev').filter({ hasText: '교원 연수' }).filter({ hasText: '오세진' }).filter({ has: page.locator('[data-act=bcancel]') });
+  ok(await rowOh.count() >= 1, '교실 예약 줄에 [취소] 버튼');
+  await rowOh.first().locator('[data-act=bcancel]').click();
+  await page.waitForSelector('#modal:not([hidden]) .dlg');
+  await page.click('#modal [data-r="1"]');
+  await page.waitForFunction(() => !Array.from(document.querySelectorAll('.ev')).some((e) => /교원 연수/.test(e.textContent) && /오세진/.test(e.textContent) && e.querySelector('[data-act=bcancel]')));
+  await page.waitForFunction(() => /취소/.test(document.getElementById('toast').textContent));
+  ok(env.call('boot').reservations.find((v) => v.person === '오세진').status === '취소', '교실 예약 취소가 서버에 저장');
+  // 교구 예약(예약됨)도 브리핑에서 취소
+  const rowHa = page.locator('.ev', { hasText: '정바다' }).filter({ has: page.locator('[data-act=bcancel]') });
+  ok(await rowHa.count() >= 1, '교구 예약됨 줄에도 [취소] 버튼');
 
   // 2. 공문 확인
   await page.fill('#doc-' + rC.id, '하늘-77');
@@ -143,6 +158,30 @@ async function draw(page) {
   await page.click('[data-act=pubtoggle]');
   await page.waitForFunction(() => document.querySelector('#toast.on'));
   ok(env.call('boot').items.find((i) => i.id === drone.id).pub === !before, '외부 공개 토글');
+  // 정렬·보기 방식
+  await page.goto(base + '#/items');
+  await page.waitForSelector('#ilist .item');
+  await page.fill('#iq', '');
+  ok(/노트북/.test(await page.locator('#ilist .item').first().textContent()), '기본은 가나다순: 첫 물품 ' + (await page.locator('#ilist .item').first().textContent()).slice(0, 20));
+  await page.selectOption('[data-ch=isort]', 'id');
+  ok(/C-001/.test(await page.locator('#ilist .item').first().textContent()), '관리번호순');
+  await page.selectOption('[data-ch=isort]', 'loc');
+  ok(await page.locator('#ilist .grp').count() >= 3, '위치별 묶음 제목');
+  await page.selectOption('[data-ch=isort]', 'ko');
+  await page.click('[data-act=iview][data-v=line]');
+  await page.waitForSelector('#ilist .crow');
+  ok(await page.locator('#ilist .crow').count() >= 6 && await page.locator('#ilist .thumb').count() === 0, '한 줄 보기: 사진 없이 촘촘히');
+  await page.click('[data-act=iview][data-v=gal]');
+  await page.waitForSelector('#ilist .gcard');
+  ok(await page.locator('#ilist .gcard').count() >= 6, '갤러리 보기');
+  ok(await page.locator('#ilist .gcard .gbadge').count() >= 6, '갤러리에 가능 수량 작은 표시');
+  const cols = await page.evaluate(() => getComputedStyle(document.querySelector('.gal')).gridTemplateColumns.split(' ').length);
+  ok(cols === 2, '휴대폰 갤러리는 2열: ' + cols);
+  await shot('02b-갤러리');
+  await page.reload();
+  await page.waitForSelector('#ilist .gcard');
+  ok(true, '고른 보기 방식을 기억함(새로고침 뒤에도 갤러리)');
+  await page.click('[data-act=iview][data-v=list]');
   // 물품 등록
   await page.goto(base + '#/item/new');
   await page.fill('[name=name]', '새 보드게임');
@@ -150,6 +189,58 @@ async function draw(page) {
   await page.click('[data-act=saveitem]');
   await page.waitForSelector('.qbar, .card h2');
   ok(env.call('boot').items.some((i) => i.name === '새 보드게임'), '물품 등록');
+
+  // 3-2. 교구 대여 달력과 가능 여부 조회
+  await page.goto(base + '#/rentals');
+  await page.waitForSelector('.cal .cell');
+  ok(await page.locator('.cal .cell.today .mk').count() >= 1 && /↗|↙/.test(await page.textContent('.cal .cell.today')), '교구 달력: 오늘 칸에 내주기·반납 표시');
+  await page.click('.cal .cell[data-d="' + Core.addDays(T, 1) + '"]');
+  ok(/하늘초등학교/.test(await page.textContent('#view')), '날짜를 누르면 그날 내주기 목록');
+  await shot('03b-교구달력');
+  await page.click('#lk summary');
+  await page.fill('#lk-q', 'ㅌㄹㅇㄷ');
+  await page.waitForSelector('.sug button');
+  await page.click('.sug button >> nth=0');
+  await page.waitForSelector('#lk-res .lkres');
+  ok(/가능/.test(await page.textContent('#lk-res')) && /대여/.test(await page.textContent('#lk-res')), '가능 여부 조회: 가능 수량과 막고 있는 일정');
+  await shot('03c-가능여부조회');
+
+  // 3-3. 센터 프로그램 교구 잡기
+  const PS = Core.addDays(T, 20), PE = Core.addDays(T, 22);
+  await page.click('[data-act=go][data-to="prog/new"]');
+  await page.waitForSelector('#p-name');
+  await page.fill('#p-name', '시험 주말창의');
+  await page.fill('#p-start', PS); await page.dispatchEvent('#p-start', 'input');
+  await page.fill('#p-end', PE); await page.dispatchEvent('#p-end', 'input');
+  ok(/대여 불가 기간/.test(await page.textContent('#p-win')) && (await page.textContent('#p-win')).includes(Core.shortDate(Core.addDays(PS, -7))), '대여 불가 기간 안내(앞 1주일)');
+  await page.fill('#p-add', 'ㅌㄹㅇㄷ');
+  await page.waitForSelector('.sug button');
+  await page.click('.sug button >> nth=0');
+  ok((await page.inputValue('#pq-0')) === '18', '교구 기본 수량 18개');
+  await page.fill('#p-add', 'ㅇㅈㅂ');
+  await page.waitForSelector('.sug button');
+  await page.click('.sug button >> nth=0');
+  ok(Number(await page.inputValue('#pq-1')) <= 15 && Number(await page.inputValue('#pq-1')) >= 1, '보유 수량이 적은 교구는 보유 수량 이내: ' + await page.inputValue('#pq-1'));
+  await shot('03d-센터프로그램');
+  await page.click('[data-act=psave]');
+  try { await page.waitForSelector('.cal .cell', { timeout: 6000 }); } catch (e) { throw new Error('센터 프로그램 저장 뒤 달력이 안 뜸. 알림: ' + (await page.textContent('#toast')) + ' / 창: ' + (await page.textContent('#modal'))); }
+  const progRows = env.call('boot').programs.filter((r) => r.name === '시험 주말창의');
+  ok(progRows.length === 2 && progRows[0].start === PS && progRows[0].end === PE, '센터 프로그램이 서버에 저장');
+  ok(await page.locator('.cal .cell .mk.orange').count() >= 1, '달력에 센터 프로그램 표시');
+  // 외부 대여 가능 수량에 반영 (프로그램 시작 3일 전 = 대여 불가 기간 안)
+  const inWin = Core.addDays(PS, -3);
+  const sh = env.call('rentalCreate', { school: '가나초등학교', teacher: '홍길동', phone: '', start: inWin, due: inWin, lines: [{ item: drone.id, qty: 30 }] });
+  ok(!sh.ok && sh.code === 'SHORT', '프로그램 준비 기간에는 외부 대여 불가');
+  // 수정 화면과 취소
+  await page.goto(base + '#/prog/' + progRows[0].id);
+  await page.waitForSelector('#plines .qline');
+  ok((await page.inputValue('#p-name')) === '시험 주말창의', '프로그램 수정 화면');
+  await page.click('[data-act=pcancel]');
+  await page.waitForSelector('#modal:not([hidden]) .dlg');
+  await page.click('#modal [data-r="1"]');
+  await page.waitForSelector('.cal .cell');
+  ok(env.call('boot').programs.filter((r) => r.name === '시험 주말창의').every((r) => r.status === '취소'), '프로그램 취소');
+  ok(env.call('rentalCreate', { school: '가나초등학교', teacher: '홍길동', phone: '', start: inWin, due: inWin, lines: [{ item: drone.id, qty: 5 }] }).ok, '취소하면 다시 대여 가능');
 
   // 4. 대여 등록 → 지금 대여 → 서명
   await page.goto(base + '#/rental/new');
@@ -215,7 +306,7 @@ async function draw(page) {
   ok(await page.locator('.cal .cell .mk').count() >= 4, '달력에 교실 표시');
   ok(/SW/.test(await page.textContent('.cal .cell.today')), '오늘 칸에 SW 표시');
   await shot('07-교실달력');
-  await page.click('[data-act=go][data-to^="res/new"]');
+  await page.locator('[data-act=go][data-to^="res/new"]').first().click();
   await page.waitForSelector('#rkinds');
   await shot('08-교실예약추가');
   await page.click('[data-act=rroom][data-n=SW교육체험교실]');
@@ -272,6 +363,9 @@ async function draw(page) {
   await wide.goto(base + '#/rentals');
   await wide.waitForSelector('.split .left .card');
   ok(await wide.locator('.split .left').count() === 1, '넓은 화면은 두 칸');
+  await wide.waitForSelector('.cal .cell');
+  await wide.screenshot({ path: path.join(OUT, 'w02a-교구달력.png') });
+  await wide.click('[data-act=rview][data-v=list]');
   await wide.click('[data-act=rtab][data-v=예약됨]');
   const firstRes = await wide.locator('.split .left .card [data-act=go]').first();
   await firstRes.click();
@@ -283,6 +377,7 @@ async function draw(page) {
   ok(await wide.locator('.split .left .card').count() >= 1, '내주기 화면에서도 왼쪽 목록 유지');
   await wide.screenshot({ path: path.join(OUT, 'w03-내주기.png') });
   await wide.goto(base + '#/rentals');
+  await wide.click('[data-act=rview][data-v=list]');
   await wide.click('[data-act=rtab][data-v=대여중]');
   await wide.locator('.split .left [data-act=go][data-to$="/return"]').first().click();
   await wide.waitForSelector('[id^=rl-]');
@@ -293,6 +388,11 @@ async function draw(page) {
   await wide.goto(base + '#/items');
   await wide.waitForSelector('#ilist .item');
   await wide.screenshot({ path: path.join(OUT, 'w06-물품.png') });
+  await wide.click('[data-act=iview][data-v=gal]');
+  await wide.waitForSelector('#ilist .gcard');
+  const wcols = await wide.evaluate(() => getComputedStyle(document.querySelector('.gal')).gridTemplateColumns.split(' ').length);
+  ok(wcols >= 5, '넓은 화면 갤러리는 5열 이상: ' + wcols);
+  await wide.screenshot({ path: path.join(OUT, 'w07-갤러리.png') });
 
   ok(errors.length === 0, '브라우저 오류 없음: ' + errors.join(' | '));
   await browser.close();

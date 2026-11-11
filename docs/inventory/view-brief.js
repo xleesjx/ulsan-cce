@@ -9,10 +9,12 @@
     if (e.kind === 'handout') return '<span class="chip blue">교구 내주기</span>';
     if (e.kind === 'return') return '<span class="chip green">교구 반납</span>';
     if (e.kind === 'overdue') return '<span class="chip red">연체</span>';
+    if (e.kind === 'program') return '<span class="chip orange">센터 프로그램</span>';
     return '<span class="chip ' + (RK[e.rkind] || 'gray') + '">' + esc(e.rkind || '교실') + '</span>';
   }
 
   function target(e, isToday) {
+    if (e.kind === 'program') return 'prog/' + e.id;
     if (e.type === '교실') return 'res/' + e.id;
     if (!isToday) return 'rental/' + e.id;
     if (e.kind === 'handout') return 'rental/' + e.id + '/handover';
@@ -21,8 +23,10 @@
 
   function eventRow(e, isToday, today) {
     var when = isToday ? (e.kind === 'room' ? (e.time === '00:00' && /종일/.test(e.title) ? '종일' : esc(e.time)) : '') : (Core.diffDays(today, e.date) === 1 ? '<b>내일</b>' : esc(Core.shortDate(e.date)).replace(' ', '<br>'));
-    var title = e.type === '교실' ? esc(e.title) : esc(e.title);
-    return '<button class="ev" data-act="go" data-to="' + target(e, isToday) + '"><div class="when">' + when + '</div><div class="main"><div class="row gap6 wrap">' + chipFor(e) + '<span class="t">' + title + '</span></div><span class="s">' + esc(e.sub) + '</span></div></button>';
+    // 아직 시작하지 않은 예약(교실 예약, 교구 예약됨)은 바로 취소할 수 있게 함
+    var cancellable = e.type === '교실' || (e.type === '교구' && e.kind === 'handout');
+    return '<div class="ev"><div class="when">' + when + '</div><button class="mainbtn" data-act="go" data-to="' + target(e, isToday) + '"><div class="main"><div class="row gap6 wrap">' + chipFor(e) + '<span class="t">' + esc(e.title) + '</span></div><span class="s">' + esc(e.sub) + '</span></div></button>' +
+      (cancellable ? '<button class="btn sm danger side" data-act="bcancel" data-type="' + e.type + '" data-id="' + esc(e.id) + '" aria-label="예약 취소">취소</button>' : '') + '</div>';
   }
 
   App.views.brief = function () {
@@ -70,13 +74,35 @@
 
   App.acts.bf = function (el) { S.ui.bf = el.getAttribute('data-v'); S.ui.bn = 10; App.render(); };
   App.acts.morenext = function () { S.ui.bn = (S.ui.bn || 10) + 20; App.render(); };
+  function find(type, id) {
+    var list = type === '교실' ? S.data.reservations : S.data.rentals;
+    return list.filter(function (x) { return x.id === id; })[0];
+  }
+
   App.acts.docok = function (el) {
-    var id = el.getAttribute('data-id'), type = el.getAttribute('data-type');
-    var inp = document.getElementById('doc-' + id);
-    App.run(el, function () {
-      return App.api(type === '교실' ? 'resDoc' : 'rentalDoc', { id: id, docNo: inp ? inp.value : '' }).then(function (r) {
-        App.apply(r); App.toast('공문 접수를 확인했습니다.'); App.render();
-      });
+    var id = el.getAttribute('data-id'), type = el.getAttribute('data-type'), obj = find(type, id);
+    var inp = document.getElementById('doc-' + id), no = inp ? inp.value : '';
+    if (!obj) return;
+    var prev = { docOk: obj.docOk, docNo: obj.docNo };
+    App.optimistic(
+      function () { obj.docOk = true; obj.docNo = no; },
+      function () { return App.api(type === '교실' ? 'resDoc' : 'rentalDoc', { id: id, docNo: no }); },
+      function () { obj.docOk = prev.docOk; obj.docNo = prev.docNo; },
+      '공문 접수를 확인했습니다.');
+  };
+
+  App.acts.bcancel = function (el) {
+    var id = el.getAttribute('data-id'), type = el.getAttribute('data-type'), obj = find(type, id);
+    if (!obj) return;
+    var label = type === '교실' ? (obj.room || '일정') + ' · ' + Core.shortDate(obj.date) + ' ' + Core.timeLabel(obj) + '\n' + obj.purpose : obj.school + ' · ' + obj.teacher + ' 선생님';
+    App.confirm('이 예약을 취소할까요?', label + '\n기록은 남지만 달력과 실적에서는 빠집니다.', '취소하기', true).then(function (ok) {
+      if (!ok) return;
+      var prev = obj.status;
+      App.optimistic(
+        function () { obj.status = '취소'; },
+        function () { return App.api(type === '교실' ? 'resCancel' : 'rentalCancel', { id: id, kind: '취소' }); },
+        function () { obj.status = prev; },
+        '예약을 취소했습니다.');
     });
   };
 })();

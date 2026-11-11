@@ -109,6 +109,7 @@
     (res.rentals || []).forEach(function (o) { upsert(d.rentals, o, 'id'); });
     (res.repairs || []).forEach(function (o) { upsert(d.repairs, o, 'id'); });
     (res.reservations || []).forEach(function (o) { upsert(d.reservations, o, 'id'); });
+    if (res.programsFor) Object.keys(res.programsFor).forEach(function (id) { d.programs = d.programs.filter(function (r) { return r.id !== id; }).concat(res.programsFor[id]); });
     if (res.linesFor) Object.keys(res.linesFor).forEach(function (rid) { d.lines = d.lines.filter(function (l) { return l.rid !== rid; }).concat(res.linesFor[rid]); });
     if (res.rev) S.rev = res.rev;
     S.v++;
@@ -119,7 +120,7 @@
   function fresh() {
     if (cache.v === S.v) return;
     cache.v = S.v;
-    cache.idx = Core.makeIndex(S.data);
+    cache.idx = Core.makeIndex(S.data, { buffer: S.settings.programBuffer });
     cache.imap = {}; S.data.items.forEach(function (i) { cache.imap[i.id] = i; });
     cache.rmap = {}; S.data.rentals.forEach(function (r) { cache.rmap[r.id] = r; });
     cache.linesBy = {}; S.data.lines.forEach(function (l) { (cache.linesBy[l.rid] = cache.linesBy[l.rid] || []).push(l); });
@@ -184,7 +185,7 @@
 
   function setBoot(b) {
     S.user = b.user; S.settings = b.settings; S.staff = b.staff; S.rev = b.rev; S.sheetUrl = b.sheetUrl;
-    S.data = { items: b.items, rentals: b.rentals, lines: b.lines, repairs: b.repairs, rooms: b.rooms, reservations: b.reservations };
+    S.data = { items: b.items, rentals: b.rentals, lines: b.lines, repairs: b.repairs, rooms: b.rooms, reservations: b.reservations, programs: b.programs || [] };
     S.v++; S.syncedAt = Date.now();
   }
 
@@ -228,7 +229,7 @@
 
   /* ───────── 화면 틀과 이동 ───────── */
 
-  var TABS = [['brief', '', '브리핑', 'home'], ['items', 'items', '물품', 'box'], ['rentals', 'rentals', '대여', 'swap'], ['more', 'more', '더보기', 'more']];
+  var TABS = [['brief', '', '브리핑', 'home'], ['items', 'items', '물품대장', 'box'], ['rentals', 'rentals', '교구대여', 'swap'], ['rooms', 'rooms', '교실대여', 'cal'], ['more', 'more', '더보기', 'more']];
 
   function buildShell() {
     root.innerHTML = '<div class="shell"><nav id="nav" aria-label="메뉴"></nav><main id="view"></main></div>';
@@ -284,6 +285,7 @@
       return ['rentals', p[1], p[2] || 'view'];
     }
     if (a === 'rooms') return ['rooms'];
+    if (a === 'prog') return ['progForm', p[1] === 'new' ? null : p[1]];
     if (a === 'res') return ['resForm', p[1] === 'new' ? null : p[1]];
     if (a === 'more') {
       if (p[1] === 'repairs') return ['repairs'];
