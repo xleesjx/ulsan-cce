@@ -367,8 +367,8 @@ def apply_ledger(events, ledger):
             if L["date"] != ev.date or L["name"] not in ev.persons:
                 continue
             used.add(i)
-            if L["org"] and not ev.orgs:
-                ev.orgs = [L["org"]]
+            if L["org"]:
+                ev.orgs = [L["org"]]  # 장부의 소속이 더 정확합니다
             if L["docno"]:
                 ev.docno = L["docno"]
             if L["start"] and not ev.start:
