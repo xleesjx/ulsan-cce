@@ -14,7 +14,7 @@
   function header(counts) {
     var u = ui();
     return '<div class="top"><div class="row between"><h1>교구 대여</h1><div class="row gap6"><button class="btn sm" data-act="go" data-to="prog/new">+ 센터 프로그램</button><button class="btn primary sm" data-act="go" data-to="rental/new">+ 새 대여</button></div></div>' +
-      '<div class="seg" role="group" aria-label="보기">' + [['cal', '달력'], ['list', '목록 · 반납 확인']].map(function (t) {
+      '<div class="seg" role="group" aria-label="보기">' + [['cal', '달력'], ['av', '잔여 확인'], ['list', '목록 · 반납']].map(function (t) {
         return '<button data-act="rview" data-v="' + t[0] + '" class="' + (u.v === t[0] ? 'on' : '') + '" aria-pressed="' + (u.v === t[0]) + '">' + t[1] + '</button>';
       }).join('') + '</div>' +
       (u.v === 'list' ? '<div class="tabs" role="tablist">' + [['예약됨', '예약됨 ' + counts.res], ['대여중', '대여 중 ' + counts.out], ['지난', '지난 건']].map(function (t) {
@@ -80,7 +80,7 @@
     var u = ui(), items = Core.dayItems(S.data, u.d), imap = App.imap(), today = App.today();
     var order = { out: 0, ret: 1, prog: 2 };
     items.sort(function (a, b) { return order[a.kind] - order[b.kind]; });
-    var h = '<h2 style="font-size:16px;margin:4px 2px">' + esc(Core.longDate(u.d)) + '</h2>';
+    var h = '<div class="row between" style="margin:4px 2px"><h2 style="font-size:16px">' + esc(Core.longDate(u.d)) + '</h2><button class="btn sm" data-act="avdate" data-d="' + u.d + '">이 날짜 교구 잔여 확인</button></div>';
     if (!items.length) h += '<div class="card"><span class="muted">이 날은 내주기·반납·센터 프로그램이 없습니다.</span></div>';
     items.forEach(function (it) {
       if (it.kind === 'prog') {
@@ -105,59 +105,6 @@
   App.acts.cmonth = function (el) { var u = ui(); u.m = Core.addMonths(u.m, +el.getAttribute('data-d')); u.d = ''; App.render(); };
   App.acts.rview = function (el) { ui().v = el.getAttribute('data-v'); if (App.parseHash().path.length > 1) App.go('rentals'); else App.render(); };
 
-  /* ───────── 교구 가능 여부 조회 (문의 전화 받을 때) ───────── */
-
-  var LK = { item: '', s: '', e: '', open: false };
-
-  function lookupHtml() {
-    var today = App.today();
-    if (!LK.s) { LK.s = today; LK.e = Core.addDays(today, 7); }
-    var it = LK.item ? App.imap()[LK.item] : null;
-    return '<details class="card lk" id="lk"' + (LK.open ? ' open' : '') + ' style="margin:0 12px"><summary>교구 가능 여부 조회 <span class="xs muted" style="font-weight:400;margin-left:6px">문의 전화가 왔을 때</span></summary><div class="col gap8 mt8">' +
-      '<label class="f">교구<input id="lk-q" data-in="lkq" value="' + esc(it ? it.name : '') + '" placeholder="교구 이름이나 초성으로 검색" autocomplete="off"></label>' +
-      '<div class="grid2"><label class="f">시작<input id="lk-s" type="date" data-in="lkd" value="' + esc(LK.s) + '"></label><label class="f">끝<input id="lk-e" type="date" data-in="lkd" value="' + esc(LK.e) + '"></label></div>' +
-      '<div class="row gap6 wrap"><button type="button" class="pill" data-act="lkset" data-n="0">오늘 하루</button><button type="button" class="pill" data-act="lkset" data-n="7">+1주</button><button type="button" class="pill" data-act="lkset" data-n="14">+2주</button></div><div id="lk-res"></div></div></details>';
-  }
-
-  function drawLookup() {
-    var res = document.getElementById('lk-res');
-    if (!res) return;
-    var it = LK.item ? App.imap()[LK.item] : null;
-    if (!it) { res.innerHTML = ''; return; }
-    if (!Core.validDate(LK.s) || !Core.validDate(LK.e) || LK.e < LK.s) { res.innerHTML = '<span class="small" style="color:var(--red)">날짜를 확인해 주세요.</span>'; return; }
-    var idx = App.idx(), today = App.today();
-    var av = Core.available(idx, it, LK.s, LK.e, '', today), bl = Core.blockers(S.data, idx, it.id, LK.s, LK.e, today);
-    var kindCls = { '대여': 'blue', '센터': 'orange', '수리': 'red' };
-    res.innerHTML = '<div class="lkres ' + (av > 0 ? 'ok' : 'no') + '"><span class="small">' + esc(it.name) + ' · ' + esc(Core.shortDate(LK.s)) + ' ~ ' + esc(Core.shortDate(LK.e)) + '</span>' +
-      '<b class="big">' + (av > 0 ? '가능 ' + av + '개' : '대여 불가') + ' <span class="small muted" style="font-weight:400">/ 보유 ' + it.qty + '</span></b>' +
-      (bl.length ? '<div class="col gap4 small">' + bl.map(function (b) {
-        return '<div class="row gap6 wrap"><span class="chip ' + kindCls[b.kind] + '">' + b.kind + '</span><span>' + esc(b.title) + ' · ' + b.qty + '개' + (b.from ? ' · ' + esc(Core.shortDate(b.from) + ' ~ ' + Core.shortDate(b.to)) + (b.kind === '센터' ? ' (준비·점검 포함)' : '') : '') + '</span></div>';
-      }).join('') + '</div>' : '<span class="small muted">이 기간에 막고 있는 일정이 없습니다.</span>') +
-      (av > 0 && Core.isRentable(it) ? '<button class="btn primary sm" data-act="go" data-to="rental/new?item=' + esc(it.id) + '&start=' + LK.s + '&due=' + LK.e + '">이 기간으로 대여 등록</button>' : '') + '</div>';
-  }
-
-  App.ins.lkq = function (el) {
-    var q = el.value.trim();
-    if (!q) { App.hideSug(); LK.item = ''; drawLookup(); return; }
-    var idx = App.idx(), today = App.today(), from = Core.validDate(LK.s) ? LK.s : today, to = Core.validDate(LK.e) ? LK.e : from;
-    var hits = S.data.items.filter(function (it) { return Core.isRentable(it) && Core.matchKo(q, it.name + ' ' + it.id); }).slice(0, 8).map(function (it) {
-      return { label: it.name, sub: it.id + ' · 가능 ' + Math.max(0, Core.available(idx, it, from, to, '', today)) + '개', value: it.id };
-    });
-    App.showSug(el, hits, function (it) { LK.item = it.value; el.value = it.label; drawLookup(); });
-  };
-  App.ins.lkd = function () { LK.s = document.getElementById('lk-s').value; LK.e = document.getElementById('lk-e').value; drawLookup(); };
-  App.acts.lkset = function (el) {
-    var n = +el.getAttribute('data-n'), s = document.getElementById('lk-s').value;
-    if (!Core.validDate(s)) s = App.today();
-    LK.s = s; LK.e = Core.addDays(s, n);
-    document.getElementById('lk-e').value = LK.e; drawLookup();
-  };
-  function bindLookup() {
-    var d = document.getElementById('lk');
-    if (d) d.addEventListener('toggle', function () { LK.open = d.open; });
-    drawLookup();
-  }
-
   /* ───────── 화면 ───────── */
 
   App.views.rentals = function (rid, mode, route) {
@@ -169,14 +116,14 @@
     if (rid && !wide) {
       return { html: '<div class="page">' + App.appbar(pane.title, 'rentals', pane.right || '') + '<div class="body">' + pane.html + '</div></div>' + (pane.bar ? '<div class="bar-bottom"><div class="in">' + pane.bar + '</div></div>' : ''), tab: 'rentals', after: pane.after };
     }
-    var cal = u.v === 'cal', h;
-    var after = function () { if (cal) bindLookup(); if (pane && pane.after) pane.after(); };
+    var cal = u.v === 'cal', av = u.v === 'av', h;
+    var after = function () { if (av) App.avail.after(); if (pane && pane.after) pane.after(); };
+    var idle = cal ? '<div class="col gap8">' + dayListHtml() + '</div>' : av ? '<div id="av-res"></div>' : '<div class="card empty">왼쪽에서 건을 고르면 여기에 나옵니다.</div>';
+    var paneHtml = pane ? '<div class="card" style="gap:14px"><div class="row between"><h2 style="font-size:19px">' + esc(pane.title) + '</h2>' + (pane.right || '') + '</div>' + pane.html + (pane.bar ? '<div class="row gap8">' + pane.bar + '</div>' : '') + '</div>' : idle;
     if (wide) {
-      h = '<div class="page wide"><div class="split">' + header(counts) + '<div class="left">' + (cal ? '<div class="col gap12">' + lookupHtml() + calHtml() + '</div>' : '<div class="body" style="padding:0">' + listHtml(rid) + '</div>') + '</div><div class="paneR">' +
-        (pane ? '<div class="card" style="gap:14px"><div class="row between"><h2 style="font-size:19px">' + esc(pane.title) + '</h2>' + (pane.right || '') + '</div>' + pane.html + (pane.bar ? '<div class="row gap8">' + pane.bar + '</div>' : '') + '</div>' :
-          cal ? '<div class="col gap8">' + dayListHtml() + '</div>' : '<div class="card empty">왼쪽에서 건을 고르면 여기에 나옵니다.</div>') + '</div></div></div>';
+      h = '<div class="page wide"><div class="split">' + header(counts) + '<div class="left">' + (cal ? calHtml() : av ? '<div class="col gap12">' + App.avail.inputs() + '</div>' : '<div class="body" style="padding:0">' + listHtml(rid) + '</div>') + '</div><div class="paneR">' + paneHtml + '</div></div></div>';
     } else {
-      h = '<div class="page">' + header(counts) + '<div class="body" style="' + (cal ? 'padding:12px 0' : '') + '">' + (cal ? lookupHtml() + calHtml() + '<div class="col gap8" style="padding:0 16px">' + dayListHtml() + '</div>' : listHtml(rid)) + '</div></div><button class="fab" data-act="go" data-to="rental/new">+ 새 대여</button>';
+      h = '<div class="page">' + header(counts) + '<div class="body" style="' + (cal ? 'padding:12px 0' : '') + '">' + (cal ? calHtml() + '<div class="col gap8" style="padding:0 16px">' + dayListHtml() + '</div>' : av ? App.avail.inputs() + '<div id="av-res"></div>' : listHtml(rid)) + '</div></div><button class="fab" data-act="go" data-to="rental/new">+ 새 대여</button>';
     }
     return { html: h, tab: 'rentals', after: after };
   };
@@ -367,7 +314,7 @@
       var qq = (route && route.q) || {};
       if (Core.validDate(qq.start)) { F.start = qq.start; F.due = Core.validDate(qq.due) && qq.due >= qq.start ? qq.due : Core.addDays(qq.start, days); F.dueTouched = !!qq.due; }
       var pre = route && route.q && route.q.item;
-      if (pre && App.imap()[pre] && Core.isRentable(App.imap()[pre])) F.lines.push({ item: pre, qty: 1 });
+      if (pre && App.imap()[pre] && Core.isRentable(App.imap()[pre])) F.lines.push({ item: pre, qty: Math.max(1, parseInt(qq.qty, 10) || 1) });
     }
     var h = '<div class="page">' + App.appbar(r ? '대여 예약 수정' : '새 교구 대여', 'rentals') + '<form class="body" onsubmit="return false" autocomplete="off">' +
       '<section class="card"><div class="row between"><span class="small muted">접수 직원 ' + esc(S.user.name) + ' (자동)</span><span class="chip amber">공문 확인 알림이 생겨요</span></div>' +

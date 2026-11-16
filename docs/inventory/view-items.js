@@ -149,6 +149,8 @@
     if (it.desc) h += '<section class="card"><h2>설명</h2><p style="margin:0;white-space:pre-line;color:var(--soft);font-size:14px;line-height:1.6">' + esc(it.desc) + '</p></section>';
 
     if (rentable) {
+      var ic = S.ui.ic || (S.ui.ic = { ym: Core.monthOf(App.today()) });
+      h += '<section class="card">' + App.avail.itemCal(it, ic.ym, 'icmonth', 'icday') + '</section>';
       var rm = App.rmap(), rows = [];
       S.data.lines.forEach(function (l) { if (l.item === it.id && rm[l.rid]) rows.push({ r: rm[l.rid], l: l }); });
       rows = rows.filter(function (x) { return x.r.status !== '취소' && x.r.status !== '미수령'; }).sort(function (a, b) { return b.r.start.localeCompare(a.r.start); });

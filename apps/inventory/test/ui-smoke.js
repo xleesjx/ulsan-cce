@@ -161,6 +161,7 @@ async function draw(page) {
   await page.click('#ilist .item');
   await page.waitForSelector('.qbar');
   ok(/대여 기록/.test(await page.textContent('#view')) && /다솜초등학교/.test(await page.textContent('#view')), '물품 상세의 대여 기록');
+  ok(await page.locator('.cal .cell.av').count() >= 28, '물품 상세에 날짜별 남은 수량 달력');
   await shot('03-물품상세');
   // 공개 토글
   const before = env.call('boot').items.find((i) => i.id === drone.id).pub;
@@ -199,23 +200,56 @@ async function draw(page) {
   await page.waitForSelector('.qbar, .card h2');
   ok(env.call('boot').items.some((i) => i.name === '새 보드게임'), '물품 등록');
 
-  // 3-2. 교구 대여 달력과 가능 여부 조회
+  // 3-2. 교구 대여 달력
   await page.goto(base + '#/rentals');
   await page.waitForSelector('.cal .cell');
   ok(await page.locator('.cal .cell.today .mk').count() >= 1 && /↗|↙/.test(await page.textContent('.cal .cell.today')), '교구 달력: 오늘 칸에 내주기·반납 표시');
   await page.click('.cal .cell[data-d="' + Core.addDays(T, 1) + '"]');
   ok(/하늘초등학교/.test(await page.textContent('#view')), '날짜를 누르면 그날 내주기 목록');
   await shot('03b-교구달력');
-  await page.click('#lk summary');
-  await page.fill('#lk-q', 'ㅌㄹㅇㄷ');
+
+  // 3-2b. 전화 문의: "드론 며칠부터 며칠까지 몇 대 빌릴 수 있나요?"
+  await page.click('[data-act=avdate]');
+  await page.waitForSelector('#av-q');
+  ok((await page.inputValue('#av-s')) === Core.addDays(T, 1), '달력에서 고른 날짜가 잔여 확인으로 넘어옴');
+  await page.waitForSelector('#av-res .crow');
+  ok(/수량이 줄어드는/.test(await page.textContent('#av-res')) && /전량/.test(await page.textContent('#av-res')), '교구 없이 날짜만: 줄어드는 교구 목록과 "전량 가능" 안내');
+  await shot('03c-잔여확인-목록');
+  await page.fill('#av-q', 'ㅌㄹㅇㄷ');
   await page.waitForSelector('.sug button');
   await page.click('.sug button >> nth=0');
-  await page.waitForSelector('#lk-res .lkres');
-  ok(/가능/.test(await page.textContent('#lk-res')) && /대여/.test(await page.textContent('#lk-res')), '가능 여부 조회: 가능 수량과 막고 있는 일정');
-  await shot('03c-가능여부조회');
+  await page.click('[data-act=avend][data-n="7"]');
+  await page.fill('#av-n', '5'); await page.dispatchEvent('#av-n', 'input');
+  const sD = Core.addDays(T, 1), eD = Core.addDays(T, 8);
+  ok((await page.inputValue('#av-e')) === eD, '[+1주] 버튼으로 끝나는 날 채움');
+  const boot1 = env.call('boot');
+  const L1 = Core.lookup(boot1, Core.makeIndex(boot1, { buffer: 7 }), drone.id, sD, eD, 5, T);
+  await page.waitForSelector('#av-res .lkres');
+  ok(/가능합니다/.test(await page.textContent('#av-res .lkres')) === L1.ok, '5대 문의 결과가 계산과 일치: ' + (L1.ok ? '가능' : '불가'));
+  ok((await page.textContent('#av-res .lkres')).includes('최대 ' + L1.canLend + '대'), '최대 ' + L1.canLend + '대까지 표시');
+  ok(/하늘초등학교/.test(await page.textContent('#av-res')), '막고 있는 일정(하늘초등학교)이 이유로 나옴');
+  await shot('03d-잔여확인-가능');
+  await page.fill('#av-n', '99'); await page.dispatchEvent('#av-n', 'input');
+  ok(/어려워요|빌려줄 수 없어요/.test(await page.textContent('#av-res .lkres')), '99대는 불가 안내');
+  await shot('03e-잔여확인-불가');
+  await page.click('[data-act=avcal]');
+  await page.waitForSelector('#av-res .cal .cell.av');
+  ok(await page.locator('#av-res .cal .cell.av').count() >= 28, '교구 한 달 남은 수량 달력');
+  const dayBtn = page.locator('#av-res .cal .cell.av').nth(12);
+  const dd = await dayBtn.getAttribute('data-d');
+  await dayBtn.click();
+  ok((await page.inputValue('#av-s')) === dd && (await page.inputValue('#av-e')) === dd, '달력의 날짜를 누르면 그날 하루로 확인');
+  await page.fill('#av-n', '3'); await page.dispatchEvent('#av-n', 'input');
+  await page.click('[data-act=avreserve]');
+  await page.waitForSelector('#f-school');
+  ok(/텔로에듀 드론/.test(await page.textContent('#rlines')) && (await page.inputValue('#lq-0')) === '3' && (await page.inputValue('#f-start')) === dd, '[이 내용으로 대여 예약]: 교구·수량·날짜가 채워져서 열림');
+  await shot('03f-잔여확인에서-예약');
 
   // 3-3. 센터 프로그램 교구 잡기
   const PS = Core.addDays(T, 20), PE = Core.addDays(T, 22);
+  await page.goto(base + '#/rentals');
+  await page.waitForSelector('.cal .cell');
+  ok(/센터 프로그램/.test(await page.textContent('.top')), '교구대여 위쪽에 [+ 센터 프로그램] 버튼');
   await page.click('[data-act=go][data-to="prog/new"]');
   await page.waitForSelector('#p-name');
   await page.fill('#p-name', '시험 주말창의');
@@ -370,10 +404,15 @@ async function draw(page) {
   await wide.waitForSelector('.top h1');
   await wide.screenshot({ path: path.join(OUT, 'w01-브리핑.png') });
   await wide.goto(base + '#/rentals');
-  await wide.waitForSelector('.split .left .card');
+  await wide.waitForSelector('.split .left .cal .cell');
   ok(await wide.locator('.split .left').count() === 1, '넓은 화면은 두 칸');
   await wide.waitForSelector('.cal .cell');
   await wide.screenshot({ path: path.join(OUT, 'w02a-교구달력.png') });
+  await wide.click('[data-act=rview][data-v=av]');
+  await wide.waitForSelector('#av-q');
+  await wide.waitForSelector('#av-res .crow');
+  ok(await wide.locator('.split .left #av-q').count() === 1 && await wide.locator('.split .paneR #av-res').count() === 1, '넓은 화면 잔여 확인: 왼쪽에 입력, 오른쪽에 결과');
+  await wide.screenshot({ path: path.join(OUT, 'w02b-잔여확인.png') });
   await wide.click('[data-act=rview][data-v=list]');
   await wide.click('[data-act=rtab][data-v=예약됨]');
   const firstRes = await wide.locator('.split .left .card [data-act=go]').first();

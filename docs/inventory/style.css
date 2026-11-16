@@ -263,3 +263,11 @@ table.tb td.n, table.tb th.n { text-align: right; }
 .lkres { border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .lkres.ok { background: var(--green-bg); } .lkres.no { background: var(--red-soft); border: 1px solid var(--red-line); }
 .lkres b.big { font-size: 22px; }
+
+/* 교구 하나의 한 달 남은 수량 달력 */
+.cal .cell.av { align-items: center; justify-content: flex-start; min-height: 56px; gap: 2px; }
+.cal .cell.av .d { align-self: flex-start; }
+.cal .cell.av.ok { background: #F3FAF5; } .cal .cell.av.low { background: #FFF8E6; } .cal .cell.av.zero { background: #FFF1EE; }
+.avn { font-size: 17px; font-weight: 700; line-height: 1.1; }
+.avn.ok { color: var(--green); } .avn.low { color: #B45309; } .avn.zero { color: #B42318; }
+.lkres b.big { font-size: 24px; }

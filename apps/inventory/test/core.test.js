@@ -104,7 +104,7 @@ function mk() {
   eq(r.short[0].avail, 20, '가능 수량 안내');
   r = Core.checkLines(d, idx, [{ item: 'S-001', qty: 20 }, { item: 'S-002', qty: 11 }], '2026-11-06', '2026-11-06', '', TODAY);
   eq(r.errors, [], '남은 수량 안이면 통과');
-  eq(Core.checkLines(d, idx, [{ item: 'S-001', qty: 20 }], '2026-11-06', '2026-11-13', '', TODAY).short[0].avail, 0, '기간이 길어 예약과 겹치면 가능 수량 0 (음수로 안 보임)');
+  eq(Core.checkLines(d, idx, [{ item: 'S-001', qty: 20 }], '2026-11-06', '2026-11-13', '', TODAY).short[0].avail, 6, '기간 중 가장 빠듯한 날(11/10~13: 하늘초 10 + 푸른초 12 = 22대) 기준으로 남은 6대');
   r = Core.checkLines(d, idx, [{ item: 'S-001', qty: 22 }], '2026-11-20', '2026-11-27', '', TODAY);
   eq(r.errors, [], '예약이 끝난 뒤 기간은 22대도 가능');
   eq(Core.checkLines(d, idx, [{ item: 'P-001', qty: 1 }], '2026-11-06', '2026-11-13', '', TODAY).errors.length, 1, '기본준비물은 대여 불가');
@@ -255,6 +255,68 @@ function mk() {
   eq(Core.sortItems(items, 'ko').map((i) => i.name), ['3D 블로커스', 'Beep Beep', '가블리트', ' [신] 나비', '오조봇 교재', '하노이탑'], '가나다순: 숫자·영문 먼저, 앞의 기호·공백은 무시');
   eq(Core.sortItems(items, 'id').map((i) => i.id), ['C-001', 'C-002', 'C-003', 'S-001', 'S-002', 'T-001'], '관리번호순(분류 순서 → 번호)');
   eq(Core.sortItems(items, 'loc').map((i) => i.name), ['Beep Beep', ' [신] 나비', '하노이탑', '가블리트', '오조봇 교재', '3D 블로커스'], '위치별: 위치 가나다순, 같은 위치는 이름순, 위치 없음은 맨 뒤');
+})();
+
+/* 기간 계산: 하루에 실제로 나가 있는 최대 수량 기준 (겹치지 않는 대여는 더하지 않음) */
+(function period() {
+  const T = '2026-11-16';
+  const items = [{ id: 'S-001', cat: 'SW교구', name: '텔로에듀 드론', qty: 30, status: '사용' }, { id: 'S-002', cat: 'SW교구', name: '오조봇', qty: 15, status: '사용' }];
+  const d = {
+    items,
+    rentals: [
+      { id: 'A', school: '가나초', teacher: '홍길동', start: '2026-11-17', due: '2026-11-19', status: '예약됨' },
+      { id: 'B', school: '다솜초', teacher: '김하늘', start: '2026-11-25', due: '2026-11-27', status: '예약됨' },
+      { id: 'C', school: '별빛초', teacher: '이바다', start: '2026-11-10', due: '2026-11-12', status: '대여중' },
+      { id: 'D', school: '푸른초', teacher: '박누리', start: '2026-11-18', due: '2026-11-26', status: '예약됨' }
+    ],
+    lines: [
+      { rid: 'A', item: 'S-001', qty: 10, ok: 0, broken: 0, lost: 0 }, { rid: 'B', item: 'S-001', qty: 10, ok: 0, broken: 0, lost: 0 },
+      { rid: 'C', item: 'S-001', qty: 8, ok: 0, broken: 0, lost: 0 }, { rid: 'D', item: 'S-002', qty: 5, ok: 0, broken: 0, lost: 0 }
+    ],
+    repairs: [{ id: 'F1', item: 'S-001', qty: 2, kind: '고장', status: '대기' }], programs: [], rooms: [], reservations: []
+  };
+  const idx = Core.makeIndex(d);
+  const av = (f, t) => Core.available(idx, items[0], f, t, '', T);
+  eq(av('2026-11-18', '2026-11-18'), 30 - 2 - 10, '하루: 11/18 에는 A 10대');
+  eq(av('2026-11-20', '2026-11-20'), 28, '하루: 11/20 에는 아무도 안 나감');
+  eq(av('2026-11-17', '2026-11-27'), 30 - 2 - 10, '기간 11/17~27: A와 B는 겹치지 않아 하루 최대 10대 (예전에는 20대로 잘못 계산)');
+  eq(av('2026-11-19', '2026-11-25'), 30 - 2 - 10, '기간 11/19~25: A(19일)와 B(25일)는 같은 날 없음');
+  eq(av('2026-11-17', '2026-11-17'), 18, '1일짜리도 같은 규칙');
+  const pk = Core.holdPeak(idx, 'S-001', '2026-11-17', '2026-11-27', '', T);
+  eq([pk.max, pk.date], [10, '2026-11-17'], '가장 빠듯한 첫 날짜');
+  // 같은 날 겹치면 더함
+  d.rentals.push({ id: 'E', school: '새싹초', teacher: '정나래', start: '2026-11-18', due: '2026-11-18', status: '예약됨' });
+  d.lines.push({ rid: 'E', item: 'S-001', qty: 7, ok: 0, broken: 0, lost: 0 });
+  const idx2 = Core.makeIndex(d);
+  eq(Core.available(idx2, items[0], '2026-11-17', '2026-11-27', '', T), 30 - 2 - 17, 'A(10) + E(7)가 11/18 에 겹치면 17대');
+  d.rentals.pop(); d.lines.pop();
+
+  // 전화 문의: 며칠부터 며칠까지 몇 대
+  let L = Core.lookup(d, idx, 'S-001', '2026-11-25', '2026-11-27', 15, T);
+  eq([L.ok, L.canLend, L.avail, L.total], [true, 18, 18, 30], '11/25~27 에 15대: 가능 (최대 18대 = 30 - 수리 2 - 다솜초 10)');
+  L = Core.lookup(d, idx, 'S-001', '2026-11-25', '2026-11-27', 20, T);
+  eq([L.ok, L.canLend], [false, 18], '20대는 불가, 최대 18대');
+  eq(L.blockers.filter((b) => b.kind === '대여').map((b) => b.id), ['B'], '막고 있는 일정에 다솜초');
+  eq(L.peakDate, '2026-11-25', '가장 빠듯한 날짜');
+  L = Core.lookup(d, idx, 'S-001', '2026-11-19', '2026-11-19', 1, T);
+  eq(L.returnsOnStart, 10, '시작일에 반납 예정인 수량(당일 반납분)');
+  L = Core.lookup(d, idx, 'S-001', '2026-11-25', '2026-11-27', 1, T);
+  eq(L.overdue, 8, '연체 중(아직 안 돌아온) 8대를 따로 알려 줌');
+  eq(Core.lookup(d, idx, 'S-001', '2026-11-25', '2026-11-27', 0, T).qty, 1, '수량이 비어 있으면 1개로 봄');
+  eq(Core.lookup(d, idx, 'Z-999', '2026-11-25', '2026-11-27', 1, T), null, '없는 교구');
+
+  // 줄어드는 교구 목록
+  const R = Core.reducedItems(d, idx, '2026-11-18', '2026-11-26', T);
+  eq(R.list.map((x) => x.item.id), ['S-002', 'S-001'], '남은 수량이 적은 교구가 먼저 (오조봇 10, 드론 18)');
+  eq(R.list.find((x) => x.item.id === 'S-001').avail, 30 - 2 - 10, '드론: 그 기간 하루 최대 10대 + 수리 2');
+  eq(R.list.find((x) => x.item.id === 'S-002').avail, 10, '오조봇 15 - 5');
+  eq(R.fullCount, 0, '이 자료에는 줄어들지 않는 교구가 없음');
+  eq(Core.reducedItems(d, idx, '2026-12-20', '2026-12-21', T).list.map((x) => x.item.id), ['S-001'], '12월에는 수리 대기만 줄임');
+
+  // 한 달 달력
+  const m = Core.monthAvail(idx, items[0], '2026-11', T);
+  eq([m['2026-11-18'], m['2026-11-20'], m['2026-11-26'], m['2026-11-28']], [18, 28, 18, 28], '날짜별 남은 수량 (11/18 A 10대, 11/26 B 10대, 11/28 은 B 반납 뒤)');
+  ok(m['2026-12-01'] === undefined, '그 달만 계산');
 })();
 
 console.log('core 테스트 통과: ' + passed + '개');

@@ -127,18 +127,36 @@ var Core = (function () {
     return [r.start, e];
   }
 
-  function held(idx, itemId, from, to, excludeRid, today, excludePid) {
-    var sum = 0;
+  /**
+   * from~to 기간 중 '하루에 가장 많이 나가 있는 수량'과 그 날짜.
+   * 기간 안에서 서로 겹치지 않는 대여는 더하지 않고, 같은 날 동시에 나가 있는 것만 더합니다.
+   */
+  function holdPeak(idx, itemId, from, to, excludeRid, today, excludePid) {
+    var ev = {}, any = false;
+    function add(a, b, q) {
+      if (a > to || b < from) return;
+      any = true;
+      var s0 = a < from ? from : a, e0 = b > to ? to : b, n = addDays(e0, 1);
+      ev[s0] = (ev[s0] || 0) + q;
+      ev[n] = (ev[n] || 0) - q;
+    }
     (idx.byItem[itemId] || []).forEach(function (e) {
       if (e.r.id === excludeRid) return;
       var w = holdWindow(e.r, today);
-      if (w[0] <= to && from <= w[1]) sum += e.qty;
+      add(w[0], w[1], e.qty);
     });
     (idx.prog[itemId] || []).forEach(function (e) {
       if (excludePid && e.p.id === excludePid) return;
-      if (e.win[0] <= to && from <= e.win[1]) sum += e.qty;
+      add(e.win[0], e.win[1], e.qty);
     });
-    return sum;
+    if (!any) return { max: 0, date: '' };
+    var days = Object.keys(ev).sort(), cur = 0, max = 0, at = '';
+    days.forEach(function (d) { cur += ev[d]; if (cur > max) { max = cur; at = d; } });
+    return { max: max, date: at };
+  }
+
+  function held(idx, itemId, from, to, excludeRid, today, excludePid) {
+    return holdPeak(idx, itemId, from, to, excludeRid, today, excludePid).max;
   }
 
   /** from~to 기간에 빌려줄 수 있는 수량 */
@@ -229,6 +247,56 @@ var Core = (function () {
     });
     if (idx.repair[itemId]) out.push({ kind: '수리', id: '', title: '수리 대기', qty: idx.repair[itemId], from: '', to: '', status: '' });
     return out.sort(function (a, b) { return (a.from || '9').localeCompare(b.from || '9'); });
+  }
+
+  /**
+   * 전화 문의용 확인: itemId 를 from~to 에 qty 개 빌릴 수 있는지.
+   * avail = 그 기간 중 가장 빠듯한 날 기준으로 빌려줄 수 있는 최대 수량
+   */
+  function lookup(data, idx, itemId, from, to, qty, today) {
+    var it = null;
+    data.items.forEach(function (i) { if (i.id === itemId) it = i; });
+    if (!it) return null;
+    var total = int(it.qty), repair = idx.repair[itemId] || 0;
+    var pk = holdPeak(idx, itemId, from, to, '', today);
+    var avail = total - repair - pk.max;
+    var returnsOnStart = 0, overdue = 0;
+    (idx.byItem[itemId] || []).forEach(function (e) {
+      if (e.r.status === '대여중' && e.r.due < today) overdue += e.qty;
+      else if (e.r.due === from) returnsOnStart += e.qty;
+    });
+    var q = Math.max(1, int(qty));
+    return {
+      item: it, total: total, repair: repair, avail: avail, canLend: Math.max(0, avail), qty: q, ok: avail >= q,
+      peakDate: pk.date, peakHeld: pk.max, blockers: blockers(data, idx, itemId, from, to, today),
+      returnsOnStart: returnsOnStart, overdue: overdue
+    };
+  }
+
+  /** 한 달 달력용: 날짜 → 그날 이 교구의 남은 수량 */
+  function monthAvail(idx, item, ym, today) {
+    var out = {};
+    monthGrid(ym).forEach(function (c) { if (c.inMonth) out[c.date] = available(idx, item, c.date, c.date, '', today); });
+    return out;
+  }
+
+  /** 그 기간에 수량이 줄어드는(대여·센터 프로그램·수리) 교구 목록, 남은 수량이 적은 순. fullCount = 전량 가능한 교구 수 */
+  function reducedItems(data, idx, from, to, today) {
+    var ids = {};
+    Object.keys(idx.byItem).forEach(function (k) { ids[k] = 1; });
+    Object.keys(idx.prog).forEach(function (k) { ids[k] = 1; });
+    Object.keys(idx.repair).forEach(function (k) { ids[k] = 1; });
+    var list = [], rentable = 0;
+    data.items.forEach(function (it) {
+      if (!isRentable(it)) return;
+      rentable++;
+      if (!ids[it.id]) return;
+      var pk = holdPeak(idx, it.id, from, to, '', today), rp = idx.repair[it.id] || 0;
+      if (pk.max <= 0 && rp <= 0) return;
+      list.push({ item: it, total: int(it.qty), held: pk.max, repair: rp, avail: int(it.qty) - rp - pk.max, peakDate: pk.date });
+    });
+    list.sort(function (a, b) { return a.avail - b.avail || cmpKo(a.item.name, b.item.name); });
+    return { list: list, fullCount: rentable - list.length };
   }
 
   /** 교구 대여 달력 표시: 날짜 → { out: 내주기 건수, ret: 반납 건수, prog: [{id,name,edge}] } */
@@ -517,6 +585,7 @@ var Core = (function () {
     makeIndex: makeIndex, holdWindow: holdWindow, available: available, itemStats: itemStats, checkLines: checkLines,
     dueInfo: dueInfo, linesSummary: linesSummary, dayLabel: dayLabel,
     resRange: resRange, roomConflicts: roomConflicts, timeLabel: timeLabel, monthGrid: monthGrid, addMonths: addMonths, dayMarks: dayMarks,
+    holdPeak: holdPeak, lookup: lookup, monthAvail: monthAvail, reducedItems: reducedItems,
     PROG_QTY: PROG_QTY, PROG_BUFFER: PROG_BUFFER, progWindow: progWindow, groupPrograms: groupPrograms, checkProgram: checkProgram, blockers: blockers,
     rentalMonthMarks: rentalMonthMarks, dayItems: dayItems, cmpKo: cmpKo, sortItems: sortItems,
     briefing: briefing, needsMaskRental: needsMaskRental, needsMaskRes: needsMaskRes, fmtPhone: fmtPhone, stats: stats, toCsv: toCsv
