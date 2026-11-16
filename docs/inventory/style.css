@@ -273,3 +273,8 @@ table.tb td.n, table.tb th.n { text-align: right; }
 .lkres b.big { font-size: 24px; }
 
 .f input.bad { border-color: var(--red); outline: 2px solid var(--red); }
+
+/* 교구 사진이 보이는 검색 후보, 문의한 기간 표시 */
+.sug .sg { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sug img { width: 36px; height: 36px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 6px; flex-shrink: 0; }
+.cal .cell.av.inrange { box-shadow: inset 0 0 0 2px var(--blue); }

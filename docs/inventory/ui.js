@@ -134,7 +134,7 @@
     var box = document.createElement('div');
     box.className = 'sug'; box.setAttribute('role', 'listbox');
     box.innerHTML = items.map(function (it, i) {
-      return '<button type="button" role="option" data-act="sugpick" data-i="' + i + '"><span>' + esc(it.label) + '</span>' + (it.sub ? '<span class="xs muted">' + esc(it.sub) + '</span>' : '') + '</button>';
+      return '<button type="button" role="option" data-act="sugpick" data-i="' + i + '"><span class="sg">' + (it.thumb ? '<img src="' + esc(it.thumb) + '" alt="" loading="lazy" onerror="this.remove()">' : '') + '<span>' + esc(it.label) + '</span></span>' + (it.sub ? '<span class="xs muted">' + esc(it.sub) + '</span>' : '') + '</button>';
     }).join('');
     box._items = items;
     input.parentNode.appendChild(box);

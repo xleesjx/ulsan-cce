@@ -8,7 +8,7 @@
   var App = window.App, esc = App.esc, S = App.S;
 
   function st() {
-    if (!S.ui.av) { var t = App.today(); S.ui.av = { item: '', s: t, e: t, n: 1, ym: Core.monthOf(t), cal: false }; }
+    if (!S.ui.av) { var t = App.today(); S.ui.av = { item: '', s: t, e: t, n: 1, ym: Core.monthOf(t), cal: true }; }
     return S.ui.av;
   }
 
@@ -41,6 +41,7 @@
     var h = '<div class="col gap8"><section class="lkres ' + (L.ok ? 'ok' : 'no') + '" role="status"><b class="big">' + (L.ok ? '가능합니다' : L.canLend === 0 ? '빌려줄 수 없어요' : L.qty + unit + '는 어려워요') + '</b>' +
       '<span>' + esc(it.name) + ' ' + L.qty + unit + ' · ' + esc(period) + '</span>' +
       '<span class="small" style="font-weight:700">이 기간 최대 ' + L.canLend + unit + '까지 빌려줄 수 있어요 <span class="muted" style="font-weight:400">(보유 ' + L.total + unit + ')</span></span></section>';
+    h += photoCard(it);
     if (!Core.isRentable(it)) h += '<div class="tip">이 물품은 대여용이 아니에요.</div>';
     if (L.blockers.length) {
       var kindCls = { '대여': 'blue', '센터': 'orange', '수리': 'red' };
@@ -51,13 +52,46 @@
           return link ? '<button class="row gap6 wrap" style="background:none;border:0;padding:4px 0;text-align:left;font-size:14px" data-act="go" data-to="' + esc(link) + '">' + inner + '</button>' : '<div class="row gap6 wrap small">' + inner + '</div>';
         }).join('') + '</section>';
     } else h += '<div class="card"><span class="small muted">이 기간에 나가 있거나 잡혀 있는 일정이 없습니다.</span></div>';
+    h += neighborsHtml(it, idx, today, unit);
     if (L.returnsOnStart > 0) h += '<div class="tip">빌리는 날(' + esc(Core.shortDate(u.s)) + ')에 <b>반납 예정인 ' + L.returnsOnStart + unit + '</b>는 아직 나가 있는 것으로 계산했어요. 그날 아침에 돌려받는다면 그만큼 더 빌려줄 수 있어요.</div>';
     if (L.overdue > 0 && u.e >= today) h += '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>연체 중인 ' + L.overdue + unit + '</b>는 돌아온 것으로 계산했어요. 아직 안 돌아왔다면 그만큼 모자랄 수 있어요.</div>';
     if (L.avail < 0) h += '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)">이 기간에는 이미 보유 수량보다 많이 잡혀 있어요 (' + (-L.avail) + unit + ' 초과).</div>';
     h += '<div class="row gap8 wrap">' + (L.ok && Core.isRentable(it) ? '<button class="btn primary block" data-act="avreserve">이 내용으로 대여 예약</button>' : '') +
       '<button class="btn block" data-act="avcal">' + (u.cal ? '한 달 달력 닫기' : '이 교구 한 달 달력 보기') + '</button></div>';
-    if (u.cal) h += '<section class="card">' + itemCal(it, u.ym, 'aymonth', 'avday') + '</section>';
+    if (u.cal) h += '<section class="card">' + itemCal(it, u.ym, 'aymonth', 'avday', { s: u.s, e: u.e }) + '</section>';
     return h + '</div>';
+  }
+
+  /** 실제 교구 모양을 확인할 수 있게 사진과 짧은 설명 */
+  function photoCard(it) {
+    var meta = [it.cat, it.loc, it.grade ? '대상 ' + it.grade : '', it.area].filter(Boolean).join(' · ');
+    var desc = (it.desc || '').replace(/\s+/g, ' ').trim();
+    return '<section class="card"><div class="row gap12" style="align-items:flex-start"><div style="width:44%;max-width:240px;flex-shrink:0">' + App.thumb(it, true) + '</div>' +
+      '<div class="col gap4 grow"><b style="font-size:16px">' + esc(it.name) + '</b><span class="xs muted">' + esc(it.id + (meta ? ' · ' + meta : '')) + '</span>' +
+      (desc ? '<span class="small" style="color:var(--soft);display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden">' + esc(desc) + '</span>' : '') +
+      '<button class="textbtn" style="padding:0;min-height:36px;text-align:left" data-act="go" data-to="item/' + esc(it.id) + '">물품 상세 보기</button></div></div></section>';
+  }
+
+  /** 앞뒤 한 달 이내의 다른 대여·사용 계획: 반납 후 점검·파손·분실 때 추가 구입할 여유가 있는지 참고 */
+  function neighborsHtml(it, idx, today, unit) {
+    var u = st(), N = Core.neighbors(S.data, idx, it.id, u.s, u.e, today), tight = N.filter(function (x) { return x.level === 'tight'; }), near = N.filter(function (x) { return x.level === 'near'; });
+    var h = '<section class="card"><b>앞뒤 한 달 이내 다른 대여·사용 계획</b><span class="xs muted">반납한 뒤 점검하고, 파손·분실이 있으면 추가로 구입할 시간이 있는지 참고하세요.</span>';
+    if (!N.length) return h + '<span class="small" style="color:var(--green-ink);font-weight:700">앞뒤 한 달 이내에 다른 계획이 없어요. 여유가 충분합니다.</span></section>';
+    if (tight.length) {
+      var side = tight.map(function (x) { return x.side === 'before' ? '앞' : '뒤'; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join('·');
+      h += '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>바로 ' + side + '에 이어지는 대여가 있어요.</b> 반납 후 점검이나 파손·분실 대응 여유가 없습니다. 날짜를 조정하거나 여유가 없다고 안내해 주세요.</div>';
+    } else if (near.length) h += '<div class="tip"><b>일주일 안에 다른 대여가 있어요.</b> 여유가 적습니다.</div>';
+    var kindCls = { '대여': 'blue', '센터': 'orange' };
+    h += N.map(function (x) {
+      var link = x.kind === '대여' ? 'rental/' + x.id : 'prog/' + x.id;
+      var rel = x.side === 'before' ? (x.gap <= 0 ? '바로 전날 반납' : '이 대여 시작 ' + (x.gap + 1) + '일 전에 반납') : (x.gap <= 0 ? '바로 다음 날 시작' : '이 대여 반납 ' + (x.gap + 1) + '일 뒤에 시작');
+      var lv = x.level === 'tight' ? '<span class="chip red">여유 없음</span>' : x.level === 'near' ? '<span class="chip amber">여유 ' + x.gap + '일</span>' : '';
+      if (x.overdue) lv += '<span class="chip red">연체 중</span>';
+      if (x.overdue) rel = '연체 중 · 아직 반납 전, 오늘 돌아온다고 계산했어요';
+      return '<button class="row gap6 wrap" style="background:none;border:0;padding:6px 0;text-align:left;font-size:14px;border-top:1px solid var(--line2)" data-act="go" data-to="' + esc(link) + '"><span class="chip gray">' + (x.side === 'before' ? '앞' : '뒤') + '</span><span class="chip ' + kindCls[x.kind] + '">' + x.kind + '</span>' + lv +
+        '<span>' + esc(x.title) + ' · ' + x.qty + unit + ' · ' + esc(Core.shortDate(x.start) + (x.end !== x.start ? ' ~ ' + Core.shortDate(x.end) : '')) + ' <span class="muted">(' + rel + ')</span></span></button>';
+    }).join('') + '</section>';
+    return h;
   }
 
   function listHtml(idx, today) {
@@ -75,16 +109,17 @@
 
   /* ───────── 교구 한 달 달력 (남은 수량) ───────── */
 
-  function itemCal(it, ym, monthAct, dayAct) {
+  function itemCal(it, ym, monthAct, dayAct, range) {
     var idx = App.idx(), today = App.today(), m = Core.monthAvail(idx, it, ym, today), total = Core.int(it.qty), p = ym.split('-');
     return '<div class="col gap8"><div class="row between"><b>' + esc(it.name) + ' · 날짜별 남은 수량</b></div>' +
       '<div class="row between"><button class="iconbtn" data-act="' + monthAct + '" data-d="-1" data-item="' + esc(it.id) + '" aria-label="이전 달">' + App.icon('left') + '</button><b style="font-size:16px">' + p[0] + '년 ' + (+p[1]) + '월</b><button class="iconbtn" data-act="' + monthAct + '" data-d="1" data-item="' + esc(it.id) + '" aria-label="다음 달">' + App.icon('right') + '</button></div>' +
-      '<div class="row wrap gap12 xs" style="color:var(--soft)"><span><b class="avn ok">20</b> 넉넉</span><span><b class="avn low">5</b> 적음</span><span><b class="avn zero">0</b> 없음</span><span class="muted">날짜를 누르면 그날로 확인해요 · 보유 ' + total + '</span></div>' +
+      '<div class="row wrap gap12 xs" style="color:var(--soft)"><span><b class="avn ok">20</b> 넉넉</span><span><b class="avn low">5</b> 적음</span><span><b class="avn zero">0</b> 없음</span><span class="muted">날짜를 누르면 그날로 확인해요 · 보유 ' + total + '</span>' + (range ? '<span><i class="lg-dot" style="border:2px solid var(--blue);background:#fff"></i> 문의한 기간</span>' : '') + '</div>' +
       '<div class="cal" role="grid" aria-label="날짜별 남은 수량">' + Core.DOW.map(function (d, i) { return '<div class="dow" style="' + (i === 0 ? 'color:#B3261E' : i === 6 ? 'color:var(--blue-ink)' : '') + '">' + d + '</div>'; }).join('') +
       Core.monthGrid(ym).map(function (c) {
         if (!c.inMonth) return '<div class="cell out"><span class="d">' + (+c.date.slice(8)) + '</span></div>';
         var a = m[c.date], cls = a <= 0 ? 'zero' : a < total / 3 ? 'low' : 'ok', w = Core.dow(c.date);
-        return '<button class="cell av ' + cls + (c.date === today ? ' today' : '') + '" data-act="' + dayAct + '" data-d="' + c.date + '" data-item="' + esc(it.id) + '" aria-label="' + Core.mdDate(c.date) + ' 남은 수량 ' + Math.max(0, a) + '개"><span class="d' + (w === 0 ? ' sun' : w === 6 ? ' sat' : '') + '">' + (+c.date.slice(8)) + '</span><span class="avn ' + cls + '">' + Math.max(0, a) + '</span></button>';
+        var inr = range && c.date >= range.s && c.date <= range.e;
+        return '<button class="cell av ' + cls + (inr ? ' inrange' : '') + (c.date === today ? ' today' : '') + '" data-act="' + dayAct + '" data-d="' + c.date + '" data-item="' + esc(it.id) + '" aria-label="' + Core.mdDate(c.date) + ' 남은 수량 ' + Math.max(0, a) + '개"><span class="d' + (w === 0 ? ' sun' : w === 6 ? ' sat' : '') + '">' + (+c.date.slice(8)) + '</span><span class="avn ' + cls + '">' + Math.max(0, a) + '</span></button>';
       }).join('') + '</div></div>';
   }
 
@@ -119,7 +154,7 @@
     var idx = App.idx(), today = App.today();
     var hits = S.data.items.filter(function (it) { return Core.isRentable(it) && Core.matchKo(q, it.name + ' ' + it.id); }).slice(0, 8).map(function (it) {
       var a = Core.available(idx, it, Core.validDate(u.s) ? u.s : today, Core.validDate(u.e) ? u.e : today, '', today);
-      return { label: it.name, sub: it.id + ' · 가능 ' + Math.max(0, a), value: it.id };
+      return { label: it.name, sub: it.id + ' · 가능 ' + Math.max(0, a), value: it.id, thumb: App.photoSrc(it) };
     });
     App.showSug(el, hits, function (it) { u.item = it.value; el.value = it.label; draw(); });
   };

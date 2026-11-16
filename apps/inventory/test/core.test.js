@@ -328,4 +328,43 @@ function mk() {
   ok(typeof Core.VERSION === 'number' && Core.VERSION >= 5, '규칙 번호');
 })();
 
+/* 앞뒤 한 달 이내 계획 (반납 후 점검·파손·분실 대응 여유) */
+(function neighborsTest() {
+  const T = '2026-11-16';
+  const items = [{ id: 'S-001', cat: 'SW교구', name: '드론', qty: 30, status: '사용' }];
+  const mkR = (id, start, due, status) => ({ id, school: id + '초', teacher: '교사', start, due, status: status || '예약됨' });
+  const d = {
+    items,
+    rentals: [
+      mkR('A', '2026-11-19', '2026-11-24'), mkR('B', '2026-11-25', '2026-11-27'), // B 는 내 기간(11/26~28)과 겹침
+      mkR('C', '2026-12-03', '2026-12-05'), mkR('D', '2026-12-29', '2027-01-02'), mkR('E', '2026-10-01', '2026-10-05'),
+      mkR('F', '2026-11-29', '2026-11-30')
+    ],
+    lines: ['A', 'B', 'C', 'D', 'E', 'F'].map((r, i) => ({ rid: r, item: 'S-001', qty: 5 + i, ok: 0, broken: 0, lost: 0 })),
+    repairs: [],
+    programs: [{ id: 'G-1', name: '방학 프로그램', start: '2026-12-20', end: '2026-12-24', item: 'S-001', qty: 18, status: '확정' }],
+    rooms: [], reservations: []
+  };
+  const idx = Core.makeIndex(d);
+  const N = Core.neighbors(d, idx, 'S-001', '2026-11-26', '2026-11-28', T);
+  eq(N.map((x) => x.id), ['A', 'F', 'C', 'G-1'], '앞뒤 30일 안에서 겹치지 않는 일정만 (겹치는 B, 한 달 넘게 먼 D·E는 제외, 12/20 센터 프로그램은 포함)');
+  const A = N[0], F = N[1], C = N[2], G = N[3];
+  eq([G.kind, G.gap, G.level], ['센터', 21, 'far'], '센터 프로그램도 포함, 여유가 충분하면 far');
+  eq([A.side, A.gap, A.level], ['before', 1, 'near'], 'A: 11/24 반납 → 내 대여(11/26) 사이 하루 비어 있음 = 여유 1일');
+  eq([F.side, F.gap, F.level], ['after', 0, 'tight'], 'F: 내 반납(11/28) 바로 다음 날(11/29) 시작 = 여유 없음');
+  eq([C.side, C.gap, C.level], ['after', 4, 'near'], 'C: 11/28 → 12/3 사이 4일');
+  const far = Core.neighbors(d, idx, 'S-001', '2026-11-26', '2026-11-28', T, 60);
+  ok(far.some((x) => x.id === 'D') && far.some((x) => x.id === 'E'), '범위를 60일로 늘리면 더 멀리 있는 대여도 나옴');
+  eq(Core.neighbors(d, idx, 'S-001', '2026-11-26', '2026-11-28', T).filter((x) => x.level === 'tight').length, 1, '바로 이어지는 것은 1건');
+  // 같은 날 이어지는 경우(반납일 = 내 시작일)는 '겹침'이라 목록에 안 나옴
+  const tight = Core.neighbors(d, idx, 'S-001', '2026-11-24', '2026-11-25', T);
+  ok(!tight.some((x) => x.id === 'A'), '내 기간과 겹치는 A(11/19~24)는 제외');
+  // 연체 중인 대여는 오늘 돌아온다고 보고, 연체 표시를 붙임
+  const od = { items, rentals: [mkR('Z', '2026-11-01', '2026-11-10', '대여중')], lines: [{ rid: 'Z', item: 'S-001', qty: 4, ok: 0, broken: 0, lost: 0 }], repairs: [], programs: [] };
+  const ON = Core.neighbors(od, Core.makeIndex(od), 'S-001', '2026-11-17', '2026-11-18', T);
+  eq([ON.length, ON[0].overdue, ON[0].level], [1, true, 'tight'], '연체 중 대여는 오늘 돌아온다고 보고 표시(연체 중)');
+  eq(N.every((x) => !x.overdue), true, '연체가 아닌 대여에는 표시 없음');
+  eq(Core.neighbors({ items, rentals: [], lines: [], repairs: [], programs: [] }, Core.makeIndex({ items, rentals: [], lines: [], repairs: [], programs: [] }), 'S-001', '2026-11-26', '2026-11-28', T), [], '계획이 없으면 빈 목록');
+})();
+
 console.log('core 테스트 통과: ' + passed + '개');

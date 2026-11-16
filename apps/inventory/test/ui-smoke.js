@@ -19,7 +19,7 @@ const SIGN = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(40);
 
 /* 시험용 가짜 자료 */
 const item = (cat, name, qty, extra) => call('itemSave', { item: Object.assign({ cat, name, qty, loc: '혜윰실' }, extra || {}) }).items[0];
-const drone = item('SW교구', '텔로에듀 드론', 30, { pub: true, grade: '전체', area: 'SW', desc: '720p 전송, 블록 코딩 지원' });
+const drone = item('SW교구', '텔로에듀 드론', 30, { pub: true, grade: '전체', area: 'SW', desc: '720p 전송, 블록 코딩 지원', photo: 'S-001.jpg' });
 const oz = item('SW교구', '오조봇 evo', 15, { loc: '라온실', pub: true });
 const stack = item('SW교구', '스택버거', 15, { loc: '라온실' });
 const hanoi = item('창의교구', '하노이탑', 36, { loc: '자료실', grade: '고', area: '수학' });
@@ -240,7 +240,25 @@ async function draw(page) {
   await page.fill('#av-n', '99'); await page.dispatchEvent('#av-n', 'input');
   ok(/어려워요|빌려줄 수 없어요/.test(await page.textContent('#av-res .lkres')), '99대는 불가 안내');
   await shot('03e-잔여확인-불가');
+  // 사진과 앞뒤 한 달 계획 목록
+  await page.fill('#av-n', '5'); await page.dispatchEvent('#av-n', 'input');
+  await page.waitForFunction(() => { const i = document.querySelector('#av-res .thumb img'); return i && i.complete && i.naturalWidth > 0; });
+  ok(/텔로에듀 드론/.test(await page.textContent('#av-res')) && /물품 상세 보기/.test(await page.textContent('#av-res')), '결과에 교구 사진과 이름·설명');
+  ok(/앞뒤 한 달 이내/.test(await page.textContent('#av-res')), '앞뒤 한 달 이내 다른 대여·사용 계획 목록');
+  ok(await page.locator('#av-res .chip.red', { hasText: '여유 없음' }).count() >= 1 && /바로/.test(await page.textContent('#av-res')), '바로 이어지는 대여는 "여유 없음"으로 경고');
+  ok(await page.locator('#av-res .chip.red', { hasText: '연체 중' }).count() >= 1, '연체 중인 대여는 연체 표시');
+  await shot('03d2-잔여확인-사진과계획');
+  // 달력은 처음부터 같이 보이고, 문의한 기간이 파란 테두리로 표시
+  await page.waitForSelector('#av-res .cal .cell.av');
+  ok(await page.locator('#av-res .cal .cell.av.inrange').count() === 8, '달력에 문의한 기간(8일) 표시');
   await page.click('[data-act=avcal]');
+  ok(await page.locator('#av-res .cal .cell.av').count() === 0, '[한 달 달력 닫기]로 접을 수 있음');
+  await page.click('[data-act=avcal]');
+  await page.waitForSelector('#av-res .cal .cell.av');
+  // 검색 후보에도 사진
+  await page.fill('#av-q', ''); await page.fill('#av-q', 'ㅌㄹㅇㄷ');
+  await page.waitForSelector('.sug button img');
+  await page.click('.sug button >> nth=0');
   await page.waitForSelector('#av-res .cal .cell.av');
   ok(await page.locator('#av-res .cal .cell.av').count() >= 28, '교구 한 달 남은 수량 달력');
   const dayBtn = page.locator('#av-res .cal .cell.av').nth(12);

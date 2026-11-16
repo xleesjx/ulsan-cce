@@ -292,6 +292,33 @@ var Core = (function () {
     };
   }
 
+  /**
+   * 요청한 기간(from~to) 앞뒤 days 일(기본 30일) 안에 있는 다른 대여·센터 프로그램.
+   * 반납 후 점검·파손·분실 때문에 추가 구입할 여유가 있는지 알아보려고, 바로 앞뒤에 이어지는지(gap)도 알려 줍니다.
+   *  gap = 두 일정 사이에 비어 있는 날 수, level: 'tight'(바로 이어짐, 0일) · 'near'(1주일 이내) · 'far'
+   */
+  function neighbors(data, idx, itemId, from, to, today, days) {
+    var span = days || 30, lo = addDays(from, -span), hi = addDays(to, span), out = [];
+    function make(kind, id, title, qty, a, b, status) {
+      var before = b < from, gap = before ? diffDays(b, from) - 1 : diffDays(to, a) - 1;
+      return { kind: kind, id: id, title: title, qty: qty, start: a, end: b, side: before ? 'before' : 'after', gap: gap, level: gap <= 0 ? 'tight' : gap <= 6 ? 'near' : 'far', status: status };
+    }
+    (idx.byItem[itemId] || []).forEach(function (e) {
+      var w = holdWindow(e.r, today);
+      if (w[0] <= to && from <= w[1]) return;      // 겹치는 일정은 '막고 있는 일정'에서 보여 줌
+      if (w[1] < lo || w[0] > hi) return;
+      var n = make('대여', e.r.id, e.r.school + ' · ' + e.r.teacher, e.qty, w[0], w[1], e.r.status);
+      n.overdue = e.r.status === '대여중' && e.r.due < today; // 아직 안 돌아온 연체: 오늘 돌아온다고 보고 계산한 것
+      out.push(n);
+    });
+    (idx.prog[itemId] || []).forEach(function (e) {
+      if (e.win[0] <= to && from <= e.win[1]) return; // 준비·점검 기간까지 겹치면 위 목록에
+      if (e.p.end < lo || e.p.start > hi) return;
+      out.push(make('센터', e.p.id, e.p.name, e.qty, e.p.start, e.p.end, '확정'));
+    });
+    return out.sort(function (a, b) { return a.start.localeCompare(b.start); });
+  }
+
   /** 한 달 달력용: 날짜 → 그날 이 교구의 남은 수량 */
   function monthAvail(idx, item, ym, today) {
     var out = {};
@@ -604,7 +631,7 @@ var Core = (function () {
     makeIndex: makeIndex, holdWindow: holdWindow, available: available, itemStats: itemStats, checkLines: checkLines,
     dueInfo: dueInfo, linesSummary: linesSummary, dayLabel: dayLabel,
     resRange: resRange, roomConflicts: roomConflicts, timeLabel: timeLabel, monthGrid: monthGrid, addMonths: addMonths, dayMarks: dayMarks,
-    holdPeak: holdPeak, lookup: lookup, monthAvail: monthAvail, reducedItems: reducedItems,
+    neighbors: neighbors, holdPeak: holdPeak, lookup: lookup, monthAvail: monthAvail, reducedItems: reducedItems,
     PROG_QTY: PROG_QTY, PROG_BUFFER: PROG_BUFFER, progWindow: progWindow, groupPrograms: groupPrograms, checkProgram: checkProgram, blockers: blockers,
     rentalMonthMarks: rentalMonthMarks, dayItems: dayItems, cmpKo: cmpKo, sortItems: sortItems,
     briefing: briefing, needsMaskRental: needsMaskRental, needsMaskRes: needsMaskRes, fmtPhone: fmtPhone, stats: stats, toCsv: toCsv

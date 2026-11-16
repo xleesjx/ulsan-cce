@@ -95,7 +95,7 @@
     if (!q) { App.hideSug(); return; }
     var have = {}; PF.lines.forEach(function (l) { have[l.item] = 1; });
     var hits = S.data.items.filter(function (it) { return Core.isRentable(it) && !have[it.id] && Core.matchKo(q, it.name + ' ' + it.id); }).slice(0, 8).map(function (it) {
-      return { label: it.name, sub: it.id + ' · 이 기간 ' + Math.max(0, availOf(it.id)) + '개', value: it.id };
+      return { label: it.name, sub: it.id + ' · 이 기간 ' + Math.max(0, availOf(it.id)) + '개', value: it.id, thumb: App.photoSrc(it) };
     });
     App.showSug(el, hits, function (it) {
       var item = App.imap()[it.value];
