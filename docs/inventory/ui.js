@@ -76,6 +76,22 @@
     inp.dispatchEvent(new Event('input', { bubbles: true }));
   };
 
+  /* ───────── 시간 입력 (24시간, 키보드로 0900) ───────── */
+  App.timeInput = function (id, label, value) {
+    return '<label class="f">' + esc(label) + '<input id="' + id + '" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="예: 0900" value="' + esc(value || '') + '" data-in="timein" data-ch="timeset"></label>';
+  };
+  /** 숫자 네 자리를 치면 바로 09:00 모양으로 */
+  App.ins.timein = function (el) {
+    var v = el.value;
+    if (/^\d{4}$/.test(v)) el.value = v.slice(0, 2) + ':' + v.slice(2);
+    el.classList.remove('bad');
+  };
+  /** 칸을 벗어날 때 900 · 13 · 9:5 같은 입력도 09:00 · 13:00 · 09:05 로 바로잡고, 잘못된 시간은 알려 줌 */
+  App.chs.timeset = function (el) {
+    var t = Core.parseTime(el.value);
+    if (t === null) { el.classList.add('bad'); App.toast('시간은 24시간으로 0900 처럼 입력해 주세요. (오후 3시 → 1500)', true); } else { el.value = t; el.classList.remove('bad'); }
+  };
+
   /* ───────── 날짜 빠른 버튼 ───────── */
   App.dateInput = function (id, label, value, quick, inName) {
     var chips = (quick || []).map(function (q) {

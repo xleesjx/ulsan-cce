@@ -8,6 +8,8 @@
 var Core = (function () {
   'use strict';
 
+  /** 서버(Core.gs)가 화면(core.js)보다 오래됐는지 알아보는 번호. 서버에도 영향을 주는 규칙을 바꿀 때마다 올립니다 */
+  var VERSION = 5;
   var CATS = ['창의교구', 'SW교구', 'SW교재', '기본준비물', '비품·장비'];
   var PREFIX = { '창의교구': 'C', 'SW교구': 'S', 'SW교재': 'T', '기본준비물': 'P', '비품·장비': 'E' };
   var RENTABLE = { '창의교구': 1, 'SW교구': 1, 'SW교재': 1 };
@@ -40,6 +42,23 @@ var Core = (function () {
   function nowStr(ms) {
     var d = new Date((ms === undefined ? Date.now() : ms) + 9 * 3600000);
     return fmt(d) + ' ' + p2(d.getUTCHours()) + ':' + p2(d.getUTCMinutes()) + ':' + p2(d.getUTCSeconds());
+  }
+  /**
+   * 키보드로 친 시간을 'HH:MM' 으로: 0900 · 900 → 09:00, 13 → 13:00, 1330 → 13:30, 9:5 → 09:05
+   * 비어 있으면 '', 알아볼 수 없으면(25시, 70분, 글자 등) null
+   */
+  function parseTime(raw) {
+    var s = str(raw), h, mi;
+    if (!s) return '';
+    var m = /^(\d{1,2})\s*:\s*(\d{1,2})$/.exec(s);
+    if (m) { h = +m[1]; mi = +m[2]; } else {
+      if (/[^\d\s:]/.test(s)) return null;
+      var d = s.replace(/\D/g, '');
+      if (!d || d.length > 4) return null;
+      if (d.length <= 2) { h = +d; mi = 0; } else { h = +d.slice(0, d.length - 2); mi = +d.slice(-2); }
+    }
+    if (h > 23 || mi > 59) return null;
+    return p2(h) + ':' + p2(mi);
   }
   function validTime(t) { return /^([01]\d|2[0-3]):[0-5]\d$/.test(t || ''); }
   function toMin(t) { return validTime(t) ? int(t.slice(0, 2)) * 60 + int(t.slice(3)) : null; }
@@ -577,7 +596,7 @@ var Core = (function () {
   }
 
   return {
-    CATS: CATS, PREFIX: PREFIX, RENTABLE: RENTABLE, KINDS: KINDS, RENTAL_STATUS: RENTAL_STATUS, KIND_CLASS: KIND_CLASS, DOW: DOW,
+    VERSION: VERSION, parseTime: parseTime, CATS: CATS, PREFIX: PREFIX, RENTABLE: RENTABLE, KINDS: KINDS, RENTAL_STATUS: RENTAL_STATUS, KIND_CLASS: KIND_CLASS, DOW: DOW,
     str: str, int: int, parse: parse, fmt: fmt, validDate: validDate, addDays: addDays, diffDays: diffDays, dow: dow,
     shortDate: shortDate, longDate: longDate, mdDate: mdDate, todayStr: todayStr, nowStr: nowStr, validTime: validTime, toMin: toMin, monthOf: monthOf,
     chosung: function (s) { return Array.from(s).map(initial).join(''); }, matchKo: matchKo,

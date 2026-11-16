@@ -41,7 +41,7 @@
     var h = '<div class="page"><div class="top"><div class="row between"><div class="col"><span class="sub">' + esc(Core.longDate(today)) + '</span><h1>오늘의 브리핑</h1></div><span class="sub">' + esc(S.user.name) + ' 선생님</span></div>' +
       '<div class="seg" role="group" aria-label="보기">' + [['all', '전체'], ['교구', '교구'], ['교실', '교실']].map(function (x) {
         return '<button data-act="bf" data-v="' + x[0] + '" class="' + (f === x[0] ? 'on' : '') + '" aria-pressed="' + (f === x[0]) + '">' + x[1] + '</button>';
-      }).join('') + '</div></div><div class="body">';
+      }).join('') + '</div></div><div class="body">' + App.versionNotice();
 
     if (b.docs.length) {
       h += '<section class="card warn" aria-label="공문 접수 확인"><div class="row between"><b style="color:var(--amber)">공문 접수 확인</b><span class="chip amber">' + b.docs.length + '건</span></div>';

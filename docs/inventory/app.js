@@ -6,7 +6,7 @@
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG || {};
-  var S = { token: null, user: null, data: null, settings: {}, staff: [], schools: [], rev: '0', sheetUrl: '', ui: {}, v: 0, syncedAt: 0 };
+  var S = { codeVersion: 0, coreVersion: 0, scriptUrl: '', token: null, user: null, data: null, settings: {}, staff: [], schools: [], rev: '0', sheetUrl: '', ui: {}, v: 0, syncedAt: 0 };
   var App = window.App = { S: S, views: {}, acts: {}, ins: {}, chs: {}, cleanup: null };
   var root = document.getElementById('app');
 
@@ -74,6 +74,20 @@
       .then(function (r) { if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = label; } return r; });
   };
 
+  /* ───────── 서버 코드가 오래됐는지 ───────── */
+
+  App.REQUIRED_CODE = 5;
+  /** 서버(Apps Script)의 코드가 이 화면보다 오래되면 true */
+  App.outdated = function () { return !!S.data && (S.codeVersion < App.REQUIRED_CODE || S.coreVersion < Core.VERSION); };
+  App.versionNotice = function () {
+    return App.outdated() ? '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>서버 코드를 새 버전으로 바꿔 주세요.</b> 화면과 서버의 버전이 달라서 일부 계산이 어긋날 수 있어요. <button class="textbtn" style="padding:0;min-height:0;color:var(--red);text-decoration:underline" data-act="go" data-to="more">더보기에서 방법 보기</button></div>' : '';
+  };
+  /** 이 앱이 올라가 있는 GitHub 저장소 (주소에서 알아냄: 소유자가 바뀌어도 그대로 동작) */
+  App.repo = function () {
+    var owner = /^([^.]+)\.github\.io$/.exec(location.hostname), name = location.pathname.split('/')[1];
+    return { owner: owner ? owner[1] : 'xleesjx', name: owner && name ? name : 'ulsan-cce' };
+  };
+
   /* ───────── 서버 연결 ───────── */
 
   function jwtPayload(tok) {
@@ -82,7 +96,20 @@
       return JSON.parse(decodeURIComponent(escape(atob(s))));
     } catch (e) { return null; }
   }
-  function tokenValid(tok) { var p = tok && jwtPayload(tok); return !!(p && p.exp * 1000 > Date.now() + 60000); }
+  /**
+   * 로그인 표는 두 가지입니다.
+   *  - 센터 앱 로그인 표('s1.'로 시작, 기본 14일): 구글 로그인 한 번 뒤에 서버가 발급. 기기에 오래 보관합니다.
+   *  - 구글 로그인 정보(1시간): 로그인할 때만 잠깐 씁니다. 탭을 닫으면 버립니다.
+   */
+  function isSession(tok) { return typeof tok === 'string' && tok.indexOf('s1.') === 0; }
+  function tokenValid(tok) {
+    var p = tok && jwtPayload(tok);
+    if (!p) return false;
+    return isSession(tok) ? p.x > Date.now() : p.exp * 1000 > Date.now() + 60000;
+  }
+  var SKEY = 'ci-session';
+  function saveSession(tok) { S.token = tok; try { localStorage.setItem(SKEY, tok); } catch (e) { /* 무시 */ } }
+  function clearTokens() { try { localStorage.removeItem(SKEY); sessionStorage.removeItem('idtoken'); } catch (e) { /* 무시 */ } }
 
   App.api = function (action, payload) {
     if (!tokenValid(S.token)) { relogin('로그인 시간이 지났습니다. 다시 로그인해 주세요.'); return Promise.reject(new Error('로그인 필요')); }
@@ -94,6 +121,7 @@
           if (res.code === 'AUTH' || res.code === 'FORBIDDEN') relogin(res.error);
           var e = new Error(res.error || '오류'); e.code = res.code; e.extra = res.extra; throw e;
         }
+        if (res.session) saveSession(res.session); // 서버가 새 로그인 표를 주면 바꿔 둠 (쓰는 동안 계속 로그인 유지)
         return res;
       }, function () { throw new Error('서버에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'); });
   };
@@ -134,7 +162,7 @@
 
   function relogin(msg) {
     S.token = null;
-    try { sessionStorage.removeItem('idtoken'); } catch (e) { /* 무시 */ }
+    clearTokens();
     showLogin(msg);
   }
 
@@ -160,13 +188,18 @@
   }
   function onCredential(resp) {
     S.token = resp.credential;
-    try { sessionStorage.setItem('idtoken', S.token); } catch (e) { /* 무시 */ }
-    begin();
+    // 구글 로그인 확인이 끝나면 서버에서 센터 앱 로그인 표를 받아 둡니다
+    App.api('login').then(function () { begin(); }, function (e) {
+      if (e.code === 'BAD_ACTION') { // 서버 코드가 아직 옛 버전이면 예전 방식으로 계속
+        try { sessionStorage.setItem('idtoken', S.token); } catch (x) { /* 무시 */ }
+        begin();
+      } else if (e.code !== 'AUTH' && e.code !== 'FORBIDDEN') showLogin(e.message);
+    });
   }
 
   App.logout = function () {
     S.token = null; S.data = null;
-    try { sessionStorage.removeItem('idtoken'); } catch (e) { /* 무시 */ }
+    clearTokens();
     if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
     showLogin();
   };
@@ -177,13 +210,15 @@
       return;
     }
     var saved = null;
-    try { saved = sessionStorage.getItem('idtoken'); } catch (e) { /* 무시 */ }
+    try { saved = localStorage.getItem(SKEY); } catch (e) { /* 무시 */ }
+    if (!tokenValid(saved)) { try { saved = sessionStorage.getItem('idtoken'); } catch (e) { saved = null; } }
     if (tokenValid(saved)) { S.token = saved; begin(); } else showLogin();
   };
 
   /* ───────── 처음 불러오기 ───────── */
 
   function setBoot(b) {
+    S.codeVersion = b.codeVersion || 0; S.coreVersion = b.coreVersion || 0; S.scriptUrl = b.scriptUrl || '';
     S.user = b.user; S.settings = b.settings; S.staff = b.staff; S.rev = b.rev; S.sheetUrl = b.sheetUrl;
     S.data = { items: b.items, rentals: b.rentals, lines: b.lines, repairs: b.repairs, rooms: b.rooms, reservations: b.reservations, programs: b.programs || [] };
     S.v++; S.syncedAt = Date.now();

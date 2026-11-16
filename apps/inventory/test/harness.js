@@ -110,7 +110,10 @@ function createEnv(opts) {
       base64EncodeWebSafe: (b) => Buffer.from(b).toString('base64url'),
       base64Encode: (b) => Buffer.from(b).toString('base64'),
       base64Decode: (s) => Array.from(Buffer.from(s, 'base64')),
-      newBlob: (bytes, type, name) => ({ bytes, type, name }),
+      newBlob: (bytes, type, name) => ({ bytes, type, name, getBytes: () => bytes, getDataAsString: () => Buffer.from(bytes).toString('utf8') }),
+      getUuid: () => crypto.randomUUID(),
+      computeHmacSha256Signature: (v, k) => Array.from(crypto.createHmac('sha256', k).update(v).digest()),
+      base64DecodeWebSafe: (s) => Array.from(Buffer.from(s, 'base64url')),
       formatDate: (d, tz, fmt) => {
         const k = new Date(d.getTime() + 9 * 3600000);
         const y = k.getUTCFullYear(), M = pad(k.getUTCMonth() + 1), D = pad(k.getUTCDate());
@@ -128,6 +131,7 @@ function createEnv(opts) {
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ aud: props.CLIENT_ID, iss: 'https://accounts.google.com', email_verified: 'true', exp: String(Math.floor(Date.now() / 1000) + 3000), email }) };
       }
     },
+    ScriptApp: { getScriptId: () => 'SCRIPT123' },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }) }
   };
   // 테스트용 시계

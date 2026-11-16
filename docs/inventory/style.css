@@ -271,3 +271,5 @@ table.tb td.n, table.tb th.n { text-align: right; }
 .avn { font-size: 17px; font-weight: 700; line-height: 1.1; }
 .avn.ok { color: var(--green); } .avn.low { color: #B45309; } .avn.zero { color: #B42318; }
 .lkres b.big { font-size: 24px; }
+
+.f input.bad { border-color: var(--red); outline: 2px solid var(--red); }

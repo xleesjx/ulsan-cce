@@ -63,18 +63,26 @@ const server = http.createServer((req, res) => {
 let passed = 0;
 const ok = (c, m) => { assert.ok(c, m); passed++; };
 
-async function newPage(browser, vp, errors) {
+/** 서버에 요청을 전달: 센터 앱 로그인 표는 그대로 서버가 검사하고, 구글 로그인 정보는 시험용 계정으로 바꿔 보냄 */
+function serve(body) {
+  const tok = body.token; delete body.token;
+  if (tok && tok.startsWith('s1.')) return JSON.parse(env.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ token: tok }, body)) } }).s);
+  return env.call(body.action, body);
+}
+
+async function newPage(browser, vp, errors, opts) {
+  opts = opts || {};
   const ctxB = await browser.newContext({ viewport: vp, deviceScaleFactor: 1, hasTouch: vp.width < 900 });
   const page = await ctxB.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  const payload = Buffer.from(JSON.stringify({ email: 'owner@example.com', name: 'owner', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url');
-  await page.addInitScript((tok) => { sessionStorage.setItem('idtoken', tok); }, 'x.' + payload + '.y');
-  await page.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(){},renderButton(){},prompt(){},disableAutoSelect(){}}}};', contentType: 'text/javascript' }));
-  await page.route('https://api.test/**', async (route) => {
-    const body = JSON.parse(route.request().postData());
-    delete body.token;
-    const out = env.call(body.action, body);
+  if (!opts.loggedOut) {
+    const session = env.call('login', {}).session; // 구글 로그인을 한 번 마친 기기처럼, 센터 앱 로그인 표를 기기에 둠
+    await ctxB.addInitScript((tok) => { try { localStorage.setItem('ci-session', tok); } catch (e) { /* 무시 */ } }, session);
+  }
+  await ctxB.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(c){window.__gsiCb=c.callback},renderButton(){},prompt(){},disableAutoSelect(){}}}};', contentType: 'text/javascript' }));
+  await ctxB.route('https://api.test/**', async (route) => {
+    const out = serve(JSON.parse(route.request().postData()));
     await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
   return page;
@@ -357,6 +365,19 @@ async function draw(page) {
   await page.fill('#r-person', '김시험');
   await page.fill('#r-org', '시험과');
   await page.fill('#r-mobile', '01099998888');
+  // 시간은 24시간으로 키보드에서 바로: 0900 → 09:00
+  await page.locator('#r-start').pressSequentially('0900');
+  ok((await page.inputValue('#r-start')) === '09:00', '키보드로 0900 → 09:00');
+  await page.locator('#r-end').pressSequentially('1730');
+  ok((await page.inputValue('#r-end')) === '17:30', '키보드로 1730 → 17:30');
+  await page.fill('#r-start', '900'); await page.press('#r-start', 'Tab');
+  ok((await page.inputValue('#r-start')) === '09:00', '900 입력 후 칸을 벗어나면 09:00');
+  await page.fill('#r-start', '13'); await page.press('#r-start', 'Tab');
+  ok((await page.inputValue('#r-start')) === '13:00', '13 → 13:00');
+  await page.fill('#r-end', '2500'); await page.press('#r-end', 'Tab');
+  ok(await page.locator('#r-end.bad').count() === 1 && /24시간/.test(await page.textContent('#toast')), '25시는 빨간 표시와 안내');
+  await page.fill('#r-end', '');
+  ok(await page.inputValue('#r-start') !== '', '시작 시간만 적고 끝은 비워도 됨');
   await page.fill('#r-start', '14:00'); await page.fill('#r-end', '16:00');
   await page.click('[data-act=ressave]');
   await page.waitForSelector('#modal:not([hidden]) .dlg'); // 오늘 13~17시 예약과 겹침
@@ -441,6 +462,42 @@ async function draw(page) {
   const wcols = await wide.evaluate(() => getComputedStyle(document.querySelector('.gal')).gridTemplateColumns.split(' ').length);
   ok(wcols >= 5, '넓은 화면 갤러리는 5열 이상: ' + wcols);
   await wide.screenshot({ path: path.join(OUT, 'w07-갤러리.png') });
+
+  /* ───── 더보기: 시트·Apps Script 바로가기, 서버 버전 ───── */
+  await page.goto(base + '#/more');
+  await page.waitForSelector('[data-act=logout]');
+  ok(await page.locator('a[href*="script.google.com/home/projects/SCRIPT123/edit"]').count() === 1, '더보기에 Apps Script 열기 버튼');
+  ok(await page.locator('a[href*="docs.google.com/spreadsheets"]').count() === 1, '더보기에 구글 시트 열기 버튼');
+  ok(await page.locator('a[href*="raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/Code.gs"]').count() === 1 && await page.locator('a[href$="Core.gs"]').count() === 1, '새 Code.gs·Core.gs 열기 버튼');
+  ok(/서버 코드가 최신/.test(await page.textContent('#view')) && !(await page.evaluate(() => window.App.outdated())), '서버 코드가 최신이면 안내만');
+  await shot('13-더보기관리');
+
+  /* ───── 로그인 유지 ───── */
+  const stored = await page.evaluate(() => localStorage.getItem('ci-session'));
+  ok(/^s1\./.test(stored), '센터 앱 로그인 표가 기기에 보관됨');
+  const again = await page.context().newPage(); // 탭을 닫았다 새로 연 것과 같음(탭 임시 저장소는 비어 있음)
+  again.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  await again.goto(base);
+  await again.waitForSelector('.top h1', { timeout: 8000 });
+  ok(/브리핑/.test(await again.textContent('.top h1')), '탭을 새로 열어도 다시 로그인하지 않음');
+  await again.close();
+  // 서버가 옛 버전이면 알림
+  await page.evaluate(() => { window.App.S.codeVersion = 0; });
+  ok(await page.evaluate(() => window.App.outdated()), '서버 코드 번호가 낮으면 업데이트 필요로 판단');
+  // 처음 로그인(구글 로그인 → 로그인 표 받기 → 보관)
+  const fresh = await newPage(browser, { width: 390, height: 844 }, errors, { loggedOut: true });
+  await fresh.goto(base);
+  await fresh.waitForSelector('.login #gbtn');
+  const jwt = 'x.' + Buffer.from(JSON.stringify({ email: 'owner@example.com', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url') + '.y';
+  await fresh.waitForFunction(() => typeof window.__gsiCb === 'function');
+  await fresh.evaluate((c) => window.__gsiCb({ credential: c }), jwt);
+  await fresh.waitForSelector('.top h1', { timeout: 8000 });
+  ok(/^s1\./.test(await fresh.evaluate(() => localStorage.getItem('ci-session'))), '구글 로그인 뒤 서버에서 받은 로그인 표를 보관');
+  // 로그아웃하면 표를 지움
+  await fresh.goto(base + '#/more');
+  await fresh.click('[data-act=logout]');
+  await fresh.waitForSelector('.login #gbtn');
+  ok(await fresh.evaluate(() => localStorage.getItem('ci-session')) === null, '로그아웃하면 기기의 로그인 표 삭제');
 
   ok(errors.length === 0, '브라우저 오류 없음: ' + errors.join(' | '));
   await browser.close();

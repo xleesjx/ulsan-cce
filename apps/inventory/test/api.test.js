@@ -349,4 +349,51 @@ let V1;
   eq(e.table('설정').length, n, '다시 불러와도 중복으로 추가되지 않음');
 })();
 
+/* 15. 로그인 표(기본 14일): 구글 로그인은 한 번, 그 뒤로는 센터 앱 전용 표 */
+(function sessions() {
+  const e = createEnv({ now: new Date('2026-11-06T10:00:00+09:00') });
+  e.ctx.setupSheets();
+  const raw = (action, token, extra) => JSON.parse(e.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ action, token }, extra || {})) } }).s);
+  const L = raw('login', 'tok:owner@example.com');
+  ok(L.ok && /^s1\./.test(L.session) && L.days === 14, '구글 로그인 확인 뒤 로그인 표 발급(14일): ' + JSON.stringify(L).slice(0, 80));
+  // 표만으로 이용 (구글 확인 없이)
+  let calls = 0; const f0 = e.ctx.UrlFetchApp.fetch; e.ctx.UrlFetchApp.fetch = (...a) => { calls++; return f0(...a); };
+  const b = raw('boot', L.session);
+  ok(b.ok && b.user.email === 'owner@example.com' && calls === 0, '로그인 표로 이용하고 구글 확인을 다시 하지 않음');
+  eq([b.coreVersion >= 5, b.codeVersion >= 5, /script\.google\.com\/home\/projects\/SCRIPT123\/edit/.test(b.scriptUrl)], [true, true, true], '서버·코드 버전과 Apps Script 주소를 알려 줌');
+  eq(raw('login', L.session).session.slice(0, 3), 's1.', '표로 다시 발급도 가능');
+  eq(raw('boot', L.session.slice(0, -3) + 'abc').code, 'AUTH', '조금이라도 고친 표는 거절');
+  eq(raw('boot', 's1.엉터리.표').code, 'AUTH', '엉터리 표는 거절');
+  // 만료
+  e.setNow(new Date('2026-11-21T10:00:00+09:00'));
+  eq(raw('boot', L.session).code, 'AUTH', '14일이 지나면 만료');
+  e.setNow(new Date('2026-11-06T10:00:00+09:00'));
+  // 쓰는 동안 자동 연장 (절반 이상 지났을 때 새 표)
+  eq(raw('boot', L.session).session, undefined, '막 발급된 표는 연장하지 않음');
+  e.setNow(new Date('2026-11-15T10:00:00+09:00'));
+  const r2 = raw('boot', L.session);
+  ok(r2.ok && /^s1\./.test(r2.session), '절반 넘게 지나면 쓸 때 새 표를 돌려줌(계속 로그인 유지)');
+  e.setNow(new Date('2026-11-25T10:00:00+09:00'));
+  ok(raw('boot', r2.session).ok, '새 표는 처음 표가 만료된 뒤에도 유효');
+  e.setNow(new Date('2026-11-06T10:00:00+09:00'));
+  // 직원 탭에서 빠지면 표가 있어도 바로 막힘
+  e.table('직원').push(['temp@example.com', '임시', '']);
+  const T2 = raw('login', 'tok:temp@example.com');
+  ok(raw('boot', T2.session).ok, '다른 직원도 표 발급');
+  e.table('직원').pop();
+  eq(raw('boot', T2.session).code, 'FORBIDDEN', '직원 탭에서 빼면 표가 있어도 바로 막힘');
+  // 모든 기기 로그아웃
+  e.ctx.resetSessions();
+  eq(raw('boot', L.session).code, 'AUTH', '모든 기기 로그아웃하면 이전 표가 모두 무효');
+  ok(raw('boot', raw('login', 'tok:owner@example.com').session).ok, '다시 로그인하면 정상');
+  // 로그인 유지 일수 설정
+  e.table('설정').find((r) => r[0] === '로그인유지일수')[1] = '30';
+  eq(raw('login', 'tok:owner@example.com').days, 30, '설정 탭의 로그인유지일수가 반영');
+  e.table('설정').find((r) => r[0] === '로그인유지일수')[1] = '9999';
+  eq(raw('login', 'tok:owner@example.com').days, 90, '최대 90일');
+  // 이전 버전 시트(설정 항목 없음)도 기본값 14일
+  e.table('설정').splice(e.table('설정').findIndex((r) => r[0] === '로그인유지일수'), 1);
+  eq(raw('login', 'tok:owner@example.com').days, 14, '설정 항목이 없으면 14일');
+})();
+
 console.log('api 테스트 통과: ' + passed + '개');

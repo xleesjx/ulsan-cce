@@ -6,6 +6,9 @@
  */
 
 var TZ = 'Asia/Seoul';
+/** 화면이 요구하는 서버 코드 번호보다 낮으면 앱이 '서버 코드를 업데이트하세요'라고 알려 줍니다 */
+var CODE_VERSION = 5;
+var SESSION_PREFIX = 's1.';
 var SHEET = {
   ITEMS: '물품', RENTALS: '대여', LINES: '대여품목', REPAIRS: '수리', ROOMS: '교실', RES: '교실예약',
   INSPECT: '점검', STAFF: '직원', SETTINGS: '설정', LOG: '변경기록', PROG: '센터사용'
@@ -53,6 +56,7 @@ function doPost(e) {
     if (!fn) throw apiError_('BAD_ACTION', '알 수 없는 요청입니다.');
     out = fn(req, user);
     out.ok = true;
+    if (user.session && !out.session && user.session.x - Date.now() < user.session.d * 86400000 / 2) out.session = makeSession_(user.email, user.session.d);
   } catch (err) {
     out = { ok: false, code: err.code || 'ERROR', error: err.code ? err.message : '서버 오류: ' + err.message };
     if (err.extra) out.extra = err.extra;
@@ -65,8 +69,50 @@ function bad_(msg, extra) { return apiError_('INVALID', msg, extra); }
 
 /* ───────── 로그인 확인 ───────── */
 
+/* ───────── 센터 앱 로그인 표 (구글 로그인 뒤 발급, 기본 14일) ───────── */
+
+function secret_() {
+  var p = PropertiesService.getScriptProperties(), v = p.getProperty('SESSION_SECRET');
+  if (!v) { v = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('SESSION_SECRET', v); }
+  return v;
+}
+function sign_(msg) { return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(msg, secret_())); }
+function sameText_(a, b) {
+  if (a.length !== b.length) return false;
+  var d = 0;
+  for (var i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+function makeSession_(email, days) {
+  var payload = Utilities.base64EncodeWebSafe(JSON.stringify({ e: email, x: Date.now() + days * 86400000, d: days }));
+  return SESSION_PREFIX + payload + '.' + sign_(payload);
+}
+function readSession_(token) {
+  var parts = token.slice(SESSION_PREFIX.length).split('.');
+  if (parts.length !== 2 || !sameText_(sign_(parts[0]), parts[1])) return null;
+  var p;
+  try { p = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString()); } catch (e) { return null; }
+  return p && p.e && p.x > Date.now() ? p : null;
+}
+
 function authenticate_(token) {
   if (!token) throw apiError_('AUTH', '로그인이 필요합니다.');
+  var email, sess = null;
+  if (token.indexOf(SESSION_PREFIX) === 0) {
+    sess = readSession_(token);
+    if (!sess) throw apiError_('AUTH', '로그인 기간이 지났습니다. 다시 로그인해 주세요.');
+    email = String(sess.e).toLowerCase();
+  } else {
+    email = googleEmail_(token);
+  }
+  var staff = null;
+  table_(SHEET.STAFF).rows.forEach(function (r) { if (Core.str(r.email).toLowerCase() === email) staff = r; });
+  if (!staff) throw apiError_('FORBIDDEN', email + ' 계정은 직원으로 등록되어 있지 않습니다. 시트의 [직원] 탭에 추가해 주세요.');
+  return { email: email, name: Core.str(staff.name) || email.split('@')[0], role: Core.str(staff.role), session: sess };
+}
+
+/** 구글 로그인 정보(1시간짜리)를 확인하고 이메일을 돌려줍니다 */
+function googleEmail_(token) {
   var cache = CacheService.getScriptCache();
   var ck = 'tk_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token));
   var email = cache.get(ck);
@@ -84,11 +130,9 @@ function authenticate_(token) {
     var ttl = Math.min(3600, Math.floor((exp - Date.now()) / 1000) - 30);
     if (ttl > 30) cache.put(ck, email, ttl);
   }
-  var staff = null;
-  table_(SHEET.STAFF).rows.forEach(function (r) { if (Core.str(r.email).toLowerCase() === email) staff = r; });
-  if (!staff) throw apiError_('FORBIDDEN', email + ' 계정은 직원으로 등록되어 있지 않습니다. 시트의 [직원] 탭에 추가해 주세요.');
-  return { email: email, name: Core.str(staff.name) || email.split('@')[0], role: Core.str(staff.role) };
+  return email;
 }
+
 
 /* ───────── 시트 읽기·쓰기 ───────── */
 
@@ -206,11 +250,16 @@ function settings_() {
     maskDays: parseInt(m['연락처보관일수'], 10) || 365,
     locs: locs, centerName: m['센터이름'] || '울산창의융합교육센터', centerPhone: m['센터전화'] || '',
     programBuffer: isNaN(parseInt(m['센터사용여유일수'], 10)) ? 7 : Math.max(0, parseInt(m['센터사용여유일수'], 10)),
-    programQty: parseInt(m['센터사용기본수량'], 10) > 0 ? parseInt(m['센터사용기본수량'], 10) : 18
+    programQty: parseInt(m['센터사용기본수량'], 10) > 0 ? parseInt(m['센터사용기본수량'], 10) : 18,
+    sessionDays: Math.min(90, Math.max(1, parseInt(m['로그인유지일수'], 10) || 14))
   };
 }
 
 function today_() { return Core.todayStr(); }
+
+function scriptUrl_() {
+  try { return 'https://script.google.com/home/projects/' + ScriptApp.getScriptId() + '/edit'; } catch (e) { return ''; }
+}
 
 function bumpRev_() {
   var p = PropertiesService.getScriptProperties();
@@ -280,6 +329,12 @@ function saveImage_(dataUrl, kind, label) {
 
 var API = {};
 
+/** 구글 로그인 확인이 끝난 직원에게 센터 앱 로그인 표를 발급합니다 */
+API.login = function (req, user) {
+  var days = user.session ? user.session.d : settings_().sessionDays;
+  return { session: makeSession_(user.email, days), days: days };
+};
+
 API.rev = function () {
   return { rev: PropertiesService.getScriptProperties().getProperty('REV') || '0' };
 };
@@ -289,7 +344,8 @@ API.boot = function (req, user) {
   housekeeping_();
   var d = load_();
   return {
-    user: user, today: today_(), settings: settings_(), sheetUrl: ss_().getUrl(),
+    user: { email: user.email, name: user.name, role: user.role }, today: today_(), settings: settings_(), sheetUrl: ss_().getUrl(), scriptUrl: scriptUrl_(),
+    codeVersion: CODE_VERSION, coreVersion: Core.VERSION,
     rev: PropertiesService.getScriptProperties().getProperty('REV') || '0',
     staff: plainAll_(rows_(SHEET.STAFF, 'email')),
     items: plainAll_(d.items), rentals: plainAll_(d.rentals), lines: plainAll_(d.lines), repairs: plainAll_(d.repairs), programs: plainAll_(d.programs),
@@ -300,17 +356,18 @@ API.boot = function (req, user) {
 /** 새 설정 항목이 시트에 없으면 한 번만 추가합니다 (이전 버전에서 올린 시트를 위해) */
 function ensureSettings_() {
   var p = PropertiesService.getScriptProperties();
-  if (p.getProperty('SETTINGS_VER') === '2') return;
+  if (p.getProperty('SETTINGS_VER') === '3') return;
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
     var have = {};
     rows_(SHEET.SETTINGS, 'key').forEach(function (r) { have[r.key] = 1; });
     [['센터사용기본수량', '18', '센터 프로그램에서 교구마다 기본으로 잡아 둘 수량 (정원 16명 + 여유 2)'],
-      ['센터사용여유일수', '7', '센터 프로그램 앞뒤로 대여를 막는 날 수 (준비·점검 기간)']].forEach(function (r) {
+      ['센터사용여유일수', '7', '센터 프로그램 앞뒤로 대여를 막는 날 수 (준비·점검 기간)'],
+      ['로그인유지일수', '14', '한 번 로그인하면 며칠 동안 다시 로그인하지 않아도 되는지 (1~90)']].forEach(function (r) {
       if (!have[r[0]]) put_(SHEET.SETTINGS, { key: r[0], value: r[1], hint: r[2] });
     });
-    p.setProperty('SETTINGS_VER', '2');
+    p.setProperty('SETTINGS_VER', '3');
     delete MEMO[SHEET.SETTINGS];
   } finally { lock.releaseLock(); }
 }
@@ -724,7 +781,14 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('창의센터 앱')
     .addItem('초기 설정 (처음 한 번)', 'setupSheets')
     .addItem('오래된 연락처 지금 가리기', 'maskNow')
+    .addItem('모든 기기에서 로그아웃', 'resetSessions')
     .addToUi();
+}
+
+/** 모든 직원의 로그인 표를 무효로 만듭니다 (분실·퇴직 등). 다음에 접속할 때 모두 다시 로그인합니다 */
+function resetSessions() {
+  PropertiesService.getScriptProperties().deleteProperty('SESSION_SECRET');
+  try { SpreadsheetApp.getUi().alert('모든 기기에서 로그아웃했습니다. 다음에 접속하면 다시 로그인해야 합니다.'); } catch (e) { /* 메뉴 밖에서 실행한 경우 */ }
 }
 
 function maskNow() {

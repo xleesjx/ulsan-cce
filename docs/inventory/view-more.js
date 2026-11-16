@@ -5,6 +5,23 @@
 
   /* ───────── 더보기 메뉴 ───────── */
 
+  /** 구글 시트·Apps Script 바로가기와 코드 업데이트 방법 */
+  function adminHtml() {
+    var r = App.repo(), raw = 'https://raw.githubusercontent.com/' + r.owner + '/' + r.name + '/main/apps/inventory/gas/';
+    function link(href, text) { return '<a class="btn" href="' + esc(href) + '" target="_blank" rel="noopener">' + text + '</a>'; }
+    return '<section class="card"><h2>관리 · 코드 업데이트</h2>' + App.versionNotice() +
+      (App.outdated() ? '' : '<span class="small" style="color:var(--green-ink);font-weight:700">서버 코드가 최신입니다 (Code ' + S.codeVersion + ' · Core ' + S.coreVersion + ')</span>') +
+      (S.scriptUrl ? '' : '<span class="xs muted">서버 코드를 한 번 업데이트하면 [Apps Script 열기] 버튼이 나타나요. 이번 한 번은 구글 시트의 <b>확장 프로그램 → Apps Script</b>로 들어가 주세요.</span>') +
+      '<div class="col gap8">' + (S.sheetUrl ? link(S.sheetUrl, '구글 시트 열기') : '') + (S.scriptUrl ? link(S.scriptUrl, 'Apps Script 열기 (코드 붙여넣는 곳)') : '') +
+      link(raw + 'Code.gs', '새 Code.gs 열기 (전체 복사용)') + link(raw + 'Core.gs', '새 Core.gs 열기 (전체 복사용)') + link('https://github.com/' + r.owner + '/' + r.name, 'GitHub 저장소 열기') + '</div>' +
+      '<details><summary class="small b" style="cursor:pointer;min-height:36px;display:flex;align-items:center">코드 업데이트 방법</summary><ol class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.8;color:var(--soft)">' +
+      '<li><b>새 Code.gs 열기</b>를 누르고, 새 탭에서 <b>Ctrl+A → Ctrl+C</b>로 전체를 복사합니다.</li>' +
+      '<li><b>Apps Script 열기</b>에서 왼쪽 <b>Code.gs</b>를 누르고 <b>Ctrl+A → Ctrl+V</b>로 바꿉니다.</li>' +
+      '<li><b>Core</b> 파일도 같은 방법으로 바꾸고 💾 저장합니다.</li>' +
+      '<li>오른쪽 위 <b>배포 → 배포 관리 → ✏️ → 버전: 새 버전 → 배포</b></li>' +
+      '<li>이 앱에서 <b>Ctrl+Shift+R</b> 새로고침</li></ol></details></section>';
+  }
+
   App.views.more = function () {
     var waiting = S.data.repairs.filter(function (r) { return r.kind === '고장' && r.status === '대기'; }).length;
     function entry(icon, title, sub, act, to, badge) {
@@ -15,6 +32,7 @@
       entry('check', '점검', '학기말 등에 물품·교실을 하나씩 확인해요', 'go', 'more/inspect', '') +
       entry('chart', '대여 실적', '교구·교실 이용 현황과 엑셀 내려받기', 'go', 'more/stats', '') +
       entry('gear', '설정·안내', '직원, 교실, 보관위치 확인', 'go', 'more/settings', '') + '</div>' +
+      adminHtml() +
       '<div class="row gap8"><button class="btn block" data-act="syncnow">' + App.icon('swap', 18) + ' 최신으로 새로고침</button><button class="btn block" data-act="logout">' + App.icon('out', 18) + ' 로그아웃</button></div></div></div>';
     return { html: h, tab: 'more' };
   };
@@ -184,7 +202,7 @@
   App.views.settings = function () {
     var st = S.settings;
     var h = '<div class="page">' + App.appbar('설정·안내', 'more') + '<div class="body">' +
-      '<section class="card flush"><div class="kv"><span>반납 기본 일수</span><span>' + st.returnDays + '일</span></div><div class="kv"><span>연락처 보관 기간</span><span>' + st.maskDays + '일 (반납 완료 후)</span></div><div class="kv"><span>센터 이름</span><span>' + esc(st.centerName) + '</span></div></section>' +
+      '<section class="card flush"><div class="kv"><span>로그인 유지</span><span>' + (st.sessionDays || 14) + '일 (쓰는 동안 자동 연장)</span></div><div class="kv"><span>반납 기본 일수</span><span>' + st.returnDays + '일</span></div><div class="kv"><span>연락처 보관 기간</span><span>' + st.maskDays + '일 (반납 완료 후)</span></div><div class="kv"><span>센터 이름</span><span>' + esc(st.centerName) + '</span></div></section>' +
       '<section class="card"><h2>직원 (' + S.staff.length + '명)</h2>' + S.staff.map(function (s) { return '<div class="row between small"><span><b>' + esc(s.name) + '</b> <span class="muted">' + esc(s.email) + '</span></span><span class="chip gray">' + esc(s.role || '직원') + '</span></div>'; }).join('') + '</section>' +
       '<section class="card"><h2>교실</h2>' + S.data.rooms.map(function (r) { return '<div class="row between small"><span>' + esc(r.short) + ' · ' + esc(r.name) + '</span><span class="muted">' + (r.priority ? '수업 우선 교실' : '') + '</span></div>'; }).join('') + '</section>' +
       '<section class="card"><h2>보관위치 목록</h2><div class="row wrap gap6">' + (st.locs || []).map(function (l) { return '<span class="chip gray">' + esc(l) + '</span>'; }).join('') + '</div></section>' +
