@@ -208,18 +208,27 @@ async function draw(page) {
   await page.waitForSelector('.qbar, .card h2');
   ok(env.call('boot').items.some((i) => i.name === '새 보드게임'), '물품 등록');
 
-  // 3-2. 교구 대여 달력
+  // 3-2. 교구 대여: 탭 3개 (문의 확인 · 처리할 것 · 월간 계획), 둥근 버튼 없음
   await page.goto(base + '#/rentals');
+  await page.waitForSelector('#av-q');
+  ok((await page.textContent('.top .tabs')).replace(/\s+/g, '').indexOf('문의확인') >= 0 && /처리할 것/.test(await page.textContent('.top .tabs')) && /월간 계획/.test(await page.textContent('.top .tabs')), '교구 대여 위쪽 탭: 문의 확인 · 처리할 것 · 월간 계획');
+  ok(await page.locator('.top .tabs button.on', { hasText: '문의 확인' }).count() === 1, '기본 탭은 문의 확인');
+  ok(await page.locator('.fab').count() === 0 && await page.locator('.top [data-to="rental/new"]').count() === 1, '떠 있는 둥근 버튼은 없고 위쪽 [+ 새 대여] 하나');
+  ok(/처리할 것/.test(await page.locator('.top .tabs button', { hasText: '처리할 것' }).textContent()) && await page.locator('.top .tabs .chip.red').count() === 1, '처리할 것 탭에 급한 건수 표시');
+  await page.click('[data-act=rview][data-v=cal]');
   await page.waitForSelector('.cal .cell');
-  ok(await page.locator('.cal .cell.today .mk').count() >= 1 && /↗|↙/.test(await page.textContent('.cal .cell.today')), '교구 달력: 오늘 칸에 내주기·반납 표시');
+  ok(await page.locator('.cal .cell.today .mk').count() >= 1 && /↗|↙/.test(await page.textContent('.cal .cell.today')), '월간 계획: 오늘 칸에 내주기·반납 표시');
   await page.click('.cal .cell[data-d="' + Core.addDays(T, 1) + '"]');
   ok(/하늘초등학교/.test(await page.textContent('#view')), '날짜를 누르면 그날 내주기 목록');
+  ok(await page.locator('[data-act=avdate]').count() === 0, '[이 날짜 교구 잔여 확인] 버튼은 없앰');
+  ok(/이번 달 센터 프로그램/.test(await page.textContent('#view')) && await page.locator('[data-act=go][data-to^="prog/new"]').count() === 1, '달력 아래 이번 달 센터 프로그램 목록과 [+ 센터 프로그램]');
   await shot('03b-교구달력');
 
   // 3-2b. 전화 문의: "드론 며칠부터 며칠까지 몇 대 빌릴 수 있나요?"
-  await page.click('[data-act=avdate]');
+  await page.click('[data-act=rview][data-v=av]');
   await page.waitForSelector('#av-q');
-  ok((await page.inputValue('#av-s')) === Core.addDays(T, 1), '달력에서 고른 날짜가 잔여 확인으로 넘어옴');
+  await page.fill('#av-s', Core.addDays(T, 1)); await page.dispatchEvent('#av-s', 'input');
+  ok((await page.inputValue('#av-s')) === Core.addDays(T, 1), '문의 확인에서 날짜 입력');
   await page.waitForSelector('#av-res .crow');
   ok(/수량이 줄어드는/.test(await page.textContent('#av-res')) && /전량/.test(await page.textContent('#av-res')), '교구 없이 날짜만: 줄어드는 교구 목록과 "전량 가능" 안내');
   await shot('03c-잔여확인-목록');
@@ -274,9 +283,10 @@ async function draw(page) {
   // 3-3. 센터 프로그램 교구 잡기
   const PS = Core.addDays(T, 20), PE = Core.addDays(T, 22);
   await page.goto(base + '#/rentals');
+  await page.waitForSelector('#av-q');
+  await page.click('[data-act=rview][data-v=cal]');
   await page.waitForSelector('.cal .cell');
-  ok(/센터 프로그램/.test(await page.textContent('.top')), '교구대여 위쪽에 [+ 센터 프로그램] 버튼');
-  await page.click('[data-act=go][data-to="prog/new"]');
+  await page.locator('[data-act=go][data-to^="prog/new"]').first().click();
   await page.waitForSelector('#p-name');
   await page.fill('#p-name', '시험 주말창의');
   await page.fill('#p-start', PS); await page.dispatchEvent('#p-start', 'input');
@@ -350,13 +360,16 @@ async function draw(page) {
   await draw(page);
   await shot('05-내주기서명');
   await page.click('[data-act=dohand]');
-  await page.waitForSelector('[data-act=rtab]');
+  await page.waitForSelector('[data-act=rview][data-v=todo].on');
   const made = env.call('boot').rentals.filter((r) => r.school === '가나초등학교' && r.status === '대여중');
   ok(made.length === 1 && made[0].sign, '내주기 완료: 서명 저장됨');
-  ok(/대여 중/.test(await page.textContent('[data-act=rtab].on')), '대여 중 탭으로 이동');
+  const todoText = await page.textContent('#view');
+  ok(/연체/.test(todoText) && /오늘 반납 받을 것/.test(todoText) && /대여 중 · 그 뒤 예약/.test(todoText), '처리할 것: 연체 → 오늘 반납 → 대여 중 순서로 한 화면');
+  ok(todoText.indexOf('연체') < todoText.indexOf('오늘 반납 받을 것'), '연체가 맨 위');
+  ok(await page.locator('[data-act=rpast]').count() === 1, '지난 기록은 접힌 버튼');
+  await shot('05b-처리할것');
 
   // 5. 반납 받기 (일부 반납 + 고장)
-  await page.click('[data-act=rtab][data-v=대여중]');
   await page.click('[data-act=go][data-to="rental/' + rB.id + '/return"]');
   await page.waitForSelector('#rl-0');
   await shot('06-반납');
@@ -364,13 +377,32 @@ async function draw(page) {
   ok(!(await page.locator('#rx-1').isHidden()), '고장 선택 시 추가 입력 보임');
   await page.fill('#rn-1', '상자 파손');
   await page.click('[data-act=doreturn]');
-  await page.waitForFunction(() => document.querySelector('[data-act=rtab]'));
+  await page.waitForSelector('[data-act=rview][data-v=todo].on');
   const rbNow = env.call('boot');
   ok(rbNow.rentals.find((r) => r.id === rB.id).status === '반납완료', '반납 완료');
   ok(rbNow.repairs.some((x) => x.item === hanoi.id && x.kind === '고장' && x.qty === 1), '고장이 수리 대기에');
 
   // 6. 교실 달력과 예약
   await page.goto(base + '#/rooms');
+  await page.waitForSelector('.cal .cell');
+  ok(/처리할 것/.test(await page.textContent('.top .tabs')) && /월간 계획/.test(await page.textContent('.top .tabs')) && await page.locator('.top .tabs button.on', { hasText: '월간 계획' }).count() === 1, '교실 대여 탭: 처리할 것 · 월간 계획(기본)');
+  ok(await page.locator('.fab').count() === 0, '교실 대여도 둥근 버튼 없음');
+  await page.click('[data-act=rmroom][data-n=SW교육체험교실]');
+  await page.waitForSelector('.cal .cell');
+  ok(await page.locator('.cal .cell .mk.green').count() === 0 && await page.locator('.cal .cell .mk').count() >= 1, 'SW교육체험교실만 보기: 다른 교실 표시가 사라짐');
+  await page.click('[data-act=rmroom][data-n=""]');
+  await page.waitForSelector('.cal .cell');
+  // (앞 단계에서 오세진 예약은 취소했으므로, 공문 확인 전 외부 대여를 하나 더 만듦)
+  call('resSave', { kind: '외부 대여', rooms: ['SW교육체험교실'], date: Core.addDays(T, 3), start: '10:00', end: '12:00', purpose: '수업 나눔', person: '정하늘', org: '가나초', mobile: '01000000007' });
+  await page.reload();
+  await page.waitForSelector('.cal .cell');
+  await page.click('[data-act=rmview][data-v=todo]');
+  await page.waitForSelector('.sec');
+  const roomTodo = await page.textContent('#view');
+  ok(/공문 접수 확인/.test(roomTodo) && /정하늘/.test(roomTodo) && await page.locator('[data-act=docok][data-type=교실]').count() >= 1, '교실 처리할 것: 공문 확인 전 외부 대여에 [공문 왔어요]');
+  ok(/오늘 사용/.test(roomTodo) && /곧 다가오는 예약/.test(roomTodo), '오늘 사용 · 곧 다가오는 예약');
+  await shot('07b-교실처리할것');
+  await page.click('[data-act=rmview][data-v=cal]');
   await page.waitForSelector('.cal .cell');
   ok(await page.locator('.cal .cell .mk').count() >= 4, '달력에 교실 표시');
   ok(/SW/.test(await page.textContent('.cal .cell.today')), '오늘 칸에 SW 표시');
@@ -443,19 +475,20 @@ async function draw(page) {
   await wide.waitForSelector('.top h1');
   await wide.screenshot({ path: path.join(OUT, 'w01-브리핑.png') });
   await wide.goto(base + '#/rentals');
-  await wide.waitForSelector('.split .left .cal .cell');
-  ok(await wide.locator('.split .left').count() === 1, '넓은 화면은 두 칸');
-  await wide.waitForSelector('.cal .cell');
-  await wide.screenshot({ path: path.join(OUT, 'w02a-교구달력.png') });
-  await wide.click('[data-act=rview][data-v=av]');
   await wide.waitForSelector('#av-q');
+  ok(await wide.locator('.split .left').count() === 1, '넓은 화면은 두 칸');
   await wide.waitForSelector('#av-res .crow');
-  ok(await wide.locator('.split .left #av-q').count() === 1 && await wide.locator('.split .paneR #av-res').count() === 1, '넓은 화면 잔여 확인: 왼쪽에 입력, 오른쪽에 결과');
-  await wide.screenshot({ path: path.join(OUT, 'w02b-잔여확인.png') });
-  await wide.click('[data-act=rview][data-v=list]');
-  await wide.click('[data-act=rtab][data-v=예약됨]');
-  const firstRes = await wide.locator('.split .left .card [data-act=go]').first();
-  await firstRes.click();
+  ok(await wide.locator('.split .left #av-q').count() === 1 && await wide.locator('.split .paneR #av-res').count() === 1, '넓은 화면 문의 확인: 왼쪽에 입력, 오른쪽에 결과');
+  await wide.screenshot({ path: path.join(OUT, 'w02b-문의확인.png') });
+  await wide.click('[data-act=rview][data-v=cal]');
+  await wide.waitForSelector('.split .left .cal .cell');
+  await wide.screenshot({ path: path.join(OUT, 'w02a-월간계획.png') });
+  await wide.click('[data-act=rview][data-v=todo]');
+  await wide.waitForSelector('.split .left .card');
+  await wide.screenshot({ path: path.join(OUT, 'w02c-처리할것.png') });
+  const resv = env.call('boot').rentals.find((r) => r.status === '예약됨' && /하늘초등학교|푸른초등학교/.test(r.school));
+  ok(resv, '예약됨 대여가 남아 있음');
+  await wide.locator('.split .left [data-act=go][data-to^="rental/' + resv.id + '"]').first().click();
   await wide.waitForSelector('.paneR .card h2');
   ok(/하늘초등학교|푸른초등학교/.test(await wide.textContent('.paneR')), '오른쪽에 상세');
   await wide.screenshot({ path: path.join(OUT, 'w02-대여상세.png') });
@@ -464,8 +497,7 @@ async function draw(page) {
   ok(await wide.locator('.split .left .card').count() >= 1, '내주기 화면에서도 왼쪽 목록 유지');
   await wide.screenshot({ path: path.join(OUT, 'w03-내주기.png') });
   await wide.goto(base + '#/rentals');
-  await wide.click('[data-act=rview][data-v=list]');
-  await wide.click('[data-act=rtab][data-v=대여중]');
+  await wide.click('[data-act=rview][data-v=todo]');
   await wide.locator('.split .left [data-act=go][data-to$="/return"]').first().click();
   await wide.waitForSelector('[id^=rl-]');
   await wide.screenshot({ path: path.join(OUT, 'w04-반납받기.png') });

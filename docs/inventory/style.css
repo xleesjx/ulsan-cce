@@ -278,3 +278,7 @@ table.tb td.n, table.tb th.n { text-align: right; }
 .sug .sg { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sug img { width: 36px; height: 36px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 6px; flex-shrink: 0; }
 .cal .cell.av.inrange { box-shadow: inset 0 0 0 2px var(--blue); }
+
+/* 탭 안의 건수 표시 */
+.tabs button .chip { vertical-align: middle; margin-left: 2px; }
+.top .tabs { margin: 0 -16px -1px; }

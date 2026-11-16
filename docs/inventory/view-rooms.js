@@ -4,24 +4,65 @@
   var App = window.App, esc = App.esc, S = App.S;
   var R = null; // 예약 입력 상태
 
-  function ui() { return S.ui.rm || (S.ui.rm = { m: '', d: '' }); }
+  /** v: 'cal' 월간 계획(기본) · 'todo' 처리할 것 */
+  function ui() { return S.ui.rm || (S.ui.rm = { m: '', d: '', v: 'cal', room: '' }); }
 
   /* ───────── 달력 ───────── */
 
-  App.views.rooms = function (route) {
-    var u = ui(), today = App.today(), q = (route && route.q) || {};
-    if (q.m) u.m = q.m;
-    if (q.d) u.d = q.d;
-    if (!u.m) u.m = Core.monthOf(today);
-    if (!u.d || Core.monthOf(u.d) !== u.m) u.d = Core.monthOf(today) === u.m ? today : u.m + '-01';
-    var rooms = S.data.rooms, res = S.data.reservations;
-    var cells = Core.monthGrid(u.m);
-    var ym = u.m.split('-');
+  function header(urgent) {
+    var u = ui();
+    return '<div class="top"><div class="row between"><h1>교실 대여</h1><button class="btn primary sm" data-act="go" data-to="res/new?date=' + (u.d || App.today()) + '">+ 교실 예약</button></div>' +
+      '<div class="tabs" role="tablist">' + [['todo', '처리할 것', urgent], ['cal', '월간 계획', 0]].map(function (t) {
+        return '<button role="tab" class="' + (u.v === t[0] ? 'on' : '') + '" aria-selected="' + (u.v === t[0]) + '" data-act="rmview" data-v="' + t[0] + '">' + t[1] + (t[2] ? ' <span class="chip red" style="height:20px;padding:0 7px">' + t[2] + '</span>' : '') + '</button>';
+      }).join('') + '</div></div>';
+  }
 
-    var h = '<div class="page wide"><div class="split">' +
-      '<div class="top"><div class="row between"><h1>교실 대여</h1><button class="btn primary sm" data-act="go" data-to="res/new">+ 교실 예약</button></div></div>' +
-      '<div class="left"><div class="col gap8" style="padding:0 12px">' +
+  function resRow(v, extra) {
+    var cls = App.kindCls(v.kind), docChip = '';
+    if (v.kind === '외부 대여') docChip = v.docOk ? '<span class="chip green">공문 접수 완료</span>' : '<span class="chip amber">공문 확인 전</span>';
+    var who = [v.person, v.org].filter(Boolean).join(' · '), tel = [v.mobile && '휴대 ' + v.mobile, v.office && '사무실 ' + v.office].filter(Boolean).join(' · ');
+    return '<div class="ev res"><div class="stripe ' + cls + '"></div><button class="mainbtn" data-act="go" data-to="res/' + esc(v.id) + '"><div class="main"><div class="row between gap8"><span class="t">' + esc((extra && extra.date ? Core.shortDate(v.date) + ' · ' : '') + Core.timeLabel(v)) + '</span>' + docChip + '</div>' +
+      '<span class="s" style="font-size:14px;color:var(--ink)">' + esc((v.room || '교실 지정 없음') + ' · ' + v.purpose) + '</span>' +
+      (who ? '<span class="s">' + esc(who) + '</span>' : '') + (tel ? '<span class="s xs">' + esc(tel) + '</span>' : '') + '<span class="xs"><span class="chip ' + cls + '">' + esc(v.kind) + '</span></span></div></button>' + (extra && extra.act ? extra.act : '') + '</div>';
+  }
+
+  /** 처리할 것: 공문 확인 전(급한 순) → 오늘 사용 → 다음 7일 */
+  function todoGroups() {
+    var today = App.today(), week = Core.addDays(today, 7), g = { doc: [], today: [], soon: [] };
+    S.data.reservations.forEach(function (v) {
+      if (v.status === '취소') return;
+      if (v.kind === '외부 대여' && !v.docOk && v.date >= today) g.doc.push(v);
+      if (v.date === today) g.today.push(v); else if (v.date > today && v.date <= week) g.soon.push(v);
+    });
+    var byTime = function (a, b) { return a.date.localeCompare(b.date) || (Core.toMin(a.start) === null ? -1 : Core.toMin(a.start)) - (Core.toMin(b.start) === null ? -1 : Core.toMin(b.start)); };
+    g.doc.sort(byTime); g.today.sort(byTime); g.soon.sort(byTime);
+    return g;
+  }
+
+  function todoHtml() {
+    var g = todoGroups(), today = App.today(), h = '<div class="col gap8">';
+    if (!g.doc.length && !g.today.length && !g.soon.length) h += '<div class="card"><span class="muted">처리할 교실 예약이 없습니다.</span></div>';
+    if (g.doc.length) {
+      h += '<div class="sec"><h2 style="color:var(--amber)">공문 접수 확인</h2><span>외부 대여 · 사용일이 가까운 순</span></div>';
+      g.doc.forEach(function (v) {
+        var days = Core.diffDays(today, v.date);
+        h += '<div class="card warn" style="gap:8px"><div class="row between gap8"><b>' + esc([v.org, v.person].filter(Boolean).join(' · ') || v.purpose) + '</b><span class="xs b" style="color:' + (days <= 1 ? 'var(--red)' : 'var(--amber)') + '">' + (days === 0 ? '오늘' : '사용 D-' + days) + '</span></div>' +
+          '<span class="small" style="color:var(--soft)">' + esc(Core.shortDate(v.date) + ' ' + (v.room || '') + ' ' + Core.timeLabel(v) + ' · ' + v.purpose) + '</span>' +
+          '<div class="row gap8"><input class="grow" id="doc-' + esc(v.id) + '" aria-label="공문번호" placeholder="공문번호 (선택)" style="height:40px;border:1px solid #D0D6DE;border-radius:10px;padding:0 10px;font-size:14px;min-width:0"><button class="btn sm" data-act="go" data-to="res/' + esc(v.id) + '">수정</button><button class="btn dark sm" style="background:var(--amber);border-color:var(--amber)" data-act="docok" data-type="교실" data-id="' + esc(v.id) + '">공문 왔어요</button></div></div>';
+      });
+    }
+    if (g.today.length) { h += '<div class="sec"><h2>오늘 사용</h2><span>' + esc(Core.shortDate(today)) + '</span></div>'; g.today.forEach(function (v) { h += resRow(v, { act: '<button class="btn sm side" data-act="go" data-to="res/' + esc(v.id) + '">수정</button>' }); }); }
+    if (g.soon.length) { h += '<div class="sec"><h2>곧 다가오는 예약</h2><span>다음 7일</span></div>'; g.soon.forEach(function (v) { h += resRow(v, { date: true, act: '<button class="btn sm side" data-act="go" data-to="res/' + esc(v.id) + '">수정</button>' }); }); }
+    return h + '</div>';
+  }
+
+  function calHtml() {
+    var u = ui(), today = App.today(), rooms = S.data.rooms, res = u.room ? S.data.reservations.filter(function (v) { return v.room === u.room; }) : S.data.reservations;
+    var cells = Core.monthGrid(u.m), ym = u.m.split('-');
+    var first = rooms.filter(function (r) { return !r.priority; });
+    return '<div class="col gap8" style="padding:0 12px">' +
       '<div class="row between"><button class="iconbtn" data-act="rmonth" data-d="-1" aria-label="이전 달">' + App.icon('left') + '</button><b style="font-size:17px">' + ym[0] + '년 ' + (+ym[1]) + '월</b><button class="iconbtn" data-act="rmonth" data-d="1" aria-label="다음 달">' + App.icon('right') + '</button></div>' +
+      '<div class="pills"><button class="pill' + (u.room ? '' : ' on dark') + '" data-act="rmroom" data-n="">전체 교실</button>' + first.map(function (r) { return '<button class="pill' + (u.room === r.name ? ' on dark' : '') + '" data-act="rmroom" data-n="' + esc(r.name) + '">' + esc(r.name) + '만</button>'; }).join('') + '</div>' +
       '<div class="row wrap gap8 xs" style="color:var(--soft)">' + rooms.map(function (r) { return '<span><b>' + esc(r.short) + '</b> ' + esc(r.name) + '</span>'; }).join('') + '</div>' +
       '<div class="row wrap gap12 xs" style="color:var(--soft)">' + Core.KINDS.map(function (k) { return '<span class="row gap4"><i class="lg-dot ' + App.kindCls(k) + '"></i>' + k + '</span>'; }).join('') + '</div>' +
       '<div class="cal" role="grid" aria-label="교실 예약 달력">' + Core.DOW.map(function (d, i) { return '<div class="dow" style="' + (i === 0 ? 'color:#B3261E' : i === 6 ? 'color:var(--blue-ink)' : '') + '">' + d + '</div>'; }).join('') +
@@ -30,10 +71,23 @@
         var shown = marks.slice(0, 4), more = marks.length - shown.length;
         return '<button class="cell' + (c.inMonth ? '' : ' out') + (c.date === u.d ? ' sel' : '') + (c.date === today ? ' today' : '') + '" data-act="rday" data-d="' + c.date + '" aria-label="' + Core.mdDate(c.date) + (marks.length ? ', 예약 ' + marks.length + '건' : '') + '"><span class="d' + (w === 0 ? ' sun' : w === 6 ? ' sat' : '') + '">' + dd + '</span>' +
           '<div class="bs">' + shown.map(function (m) { return '<i class="mk ' + m.cls + (m.wide ? ' wide' : '') + '">' + esc(m.label) + '</i>'; }).join('') + (more > 0 ? '<i class="mk gray">+' + more + '</i>' : '') + '</div></button>';
-      }).join('') + '</div></div></div>' +
-      '<div class="paneR"><div class="body" id="rdaylist"></div></div></div></div>' +
-      '<button class="fab" data-act="go" data-to="res/new?date=' + u.d + '">+ 교실 예약</button>';
-    return { html: h, tab: 'rooms', after: drawDay };
+      }).join('') + '</div></div>';
+  }
+
+  App.views.rooms = function (route) {
+    var u = ui(), today = App.today(), q = (route && route.q) || {}, wide = App.wide();
+    if (q.m) u.m = q.m;
+    if (q.d) { u.d = q.d; u.v = 'cal'; }
+    if (!u.m) u.m = Core.monthOf(today);
+    if (!u.d || Core.monthOf(u.d) !== u.m) u.d = Core.monthOf(today) === u.m ? today : u.m + '-01';
+    var cal = u.v === 'cal', head = header(todoGroups().doc.length), h;
+    if (wide) {
+      h = '<div class="page wide"><div class="split">' + head + '<div class="left">' + (cal ? calHtml() : '<div class="body" style="padding:0">' + todoHtml() + '</div>') + '</div>' +
+        '<div class="paneR"><div class="body" id="rdaylist">' + (cal ? '' : '<div class="card empty">왼쪽 목록에서 예약을 누르면 수정 화면이 열립니다.</div>') + '</div></div></div></div>';
+    } else {
+      h = '<div class="page">' + head + '<div class="body" style="' + (cal ? 'padding:12px 0' : '') + '">' + (cal ? calHtml() + '<div class="col gap8" id="rdaylist" style="padding:0 16px"></div>' : todoHtml()) + '</div></div>';
+    }
+    return { html: h, tab: 'rooms', after: cal ? drawDay : null };
   };
 
   function drawDay() {
@@ -41,26 +95,17 @@
     if (!box) return;
     var u = ui(), order = {};
     S.data.rooms.forEach(function (r, i) { order[r.name] = r.order || i + 1; });
-    var list = S.data.reservations.filter(function (v) { return v.date === u.d && v.status !== '취소'; })
+    var list = S.data.reservations.filter(function (v) { return v.date === u.d && v.status !== '취소' && (!u.room || v.room === u.room); })
       .sort(function (a, b) { return (Core.toMin(a.start) === null ? -1 : Core.toMin(a.start)) - (Core.toMin(b.start) === null ? -1 : Core.toMin(b.start)) || (order[a.room] || 99) - (order[b.room] || 99); });
-    var h = '<h2 style="font-size:16px;margin:4px 2px">' + esc(Core.longDate(u.d)) + '</h2>';
-    if (!list.length) h += '<div class="card"><span class="muted">이 날은 예약이 없습니다.</span></div>';
-    list.forEach(function (v) {
-      var cls = App.kindCls(v.kind), docChip = '';
-      if (v.kind === '외부 대여') docChip = v.docOk ? '<span class="chip green">공문 접수 완료</span>' : '<span class="chip amber">공문 확인 전</span>';
-      var who = [v.person, v.org].filter(Boolean).join(' · '), tel = [v.mobile && '휴대 ' + v.mobile, v.office && '사무실 ' + v.office].filter(Boolean).join(' · ');
-      h += '<button class="ev res" data-act="go" data-to="res/' + esc(v.id) + '"><div class="stripe ' + cls + '"></div><div class="main"><div class="row between gap8"><span class="t">' + esc(Core.timeLabel(v)) + '</span>' + docChip + '</div>' +
-        '<span class="s" style="font-size:14px;color:var(--ink)">' + esc((v.room || '교실 지정 없음') + ' · ' + v.purpose) + '</span>' +
-        (who ? '<span class="s">' + esc(who) + '</span>' : '') + (tel ? '<span class="s xs">' + esc(tel) + '</span>' : '') + '<span class="xs"><span class="chip ' + cls + '">' + esc(v.kind) + '</span></span></div></button>';
-    });
+    var h = '<div class="row between" style="margin:4px 2px"><h2 style="font-size:16px">' + esc(Core.longDate(u.d)) + (u.room ? ' · ' + esc(u.room) : '') + '</h2><button class="btn sm" data-act="go" data-to="res/new?date=' + u.d + '">이 날 예약</button></div>';
+    if (!list.length) h += '<div class="card"><span class="muted">이 날은 예약이 없습니다.' + (u.room ? ' (' + esc(u.room) + ')' : '') + '</span></div>';
+    list.forEach(function (v) { h += resRow(v); });
     box.innerHTML = h;
   }
 
-  App.acts.rday = function (el) {
-    var u = ui(); u.d = el.getAttribute('data-d'); u.m = Core.monthOf(u.d);
-    var fab = document.querySelector('.fab'); if (fab) fab.setAttribute('data-to', 'res/new?date=' + u.d);
-    App.render();
-  };
+  App.acts.rday = function (el) { var u = ui(); u.d = el.getAttribute('data-d'); u.m = Core.monthOf(u.d); App.render(); };
+  App.acts.rmview = function (el) { ui().v = el.getAttribute('data-v'); App.render(); };
+  App.acts.rmroom = function (el) { ui().room = el.getAttribute('data-n'); App.render(); };
   App.acts.rmonth = function (el) { var u = ui(); u.m = Core.addMonths(u.m, +el.getAttribute('data-d')); u.d = ''; App.render(); };
 
   /* ───────── 예약 추가·수정 ───────── */
@@ -147,7 +192,7 @@
     var send = function (force) {
       return App.api('resSave', payload(force)).then(function (res) {
         App.apply(res); App.toast(R.id ? '수정했습니다.' : '예약을 저장했습니다.');
-        var d = res.reservations[0].date; App.go('rooms', { m: Core.monthOf(d), d: d });
+        var d = res.reservations[0].date; ui().v = 'cal'; App.go('rooms', { m: Core.monthOf(d), d: d });
       }, function (e) {
         if (e.code !== 'CONFLICT') throw e;
         var list = (e.extra.conflicts || []).map(function (c) { return '· ' + (c.room || '일정') + ' ' + Core.shortDate(c.date) + ' ' + Core.timeLabel(c) + ' ' + c.kind + ' (' + c.purpose + ')'; }).join('\n');

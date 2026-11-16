@@ -1,7 +1,7 @@
 /*
  * 교구 잔여 확인: 전화 문의("A교구 며칠부터 며칠까지 몇 대 빌릴 수 있나요?")에 바로 답하는 화면
  * 교구·날짜·수량을 넣으면 가능/불가가 나오고, 그 교구의 한 달 남은 수량 달력도 보여 줍니다.
- * 교구대여 화면의 [잔여 확인] 탭과 물품 상세 화면에서 같이 씁니다.
+ * 교구대여 화면의 [문의 확인] 탭과 물품 상세 화면에서 같이 씁니다.
  */
 (function () {
   'use strict';
@@ -142,7 +142,7 @@
       if (item !== undefined) u.item = item;
       if (s) { u.s = s; u.e = e || s; u.ym = Core.monthOf(s); }
       if (n) u.n = n;
-      if (!S.ui.rt) S.ui.rt = { tab: '예약됨', n: 30, v: 'av', m: '', d: '' };
+      if (!S.ui.rt) S.ui.rt = { n: 30, v: 'av', m: '', d: '', past: false };
       S.ui.rt.v = 'av';
       App.go('rentals');
     }

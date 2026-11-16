@@ -6,23 +6,21 @@
   var photos = {};     // 반납 사진 { 줄번호: dataURL }
   var F = null;        // 예약 등록 화면의 입력 상태
 
-  function ui() { return S.ui.rt || (S.ui.rt = { tab: '예약됨', n: 30, v: 'cal', m: '', d: '' }); }
+  /** v: 'av' 문의 확인(기본) · 'todo' 처리할 것 · 'cal' 월간 계획 */
+  function ui() { return S.ui.rt || (S.ui.rt = { n: 30, v: 'av', m: '', d: '', past: false }); }
   function wideLg() { return App.wide(); }
 
   /* ───────── 대여 메뉴 (목록) ───────── */
 
-  function header(counts) {
+  function header(urgent) {
     var u = ui();
-    return '<div class="top"><div class="row between"><h1>교구 대여</h1><div class="row gap6"><button class="btn sm" data-act="go" data-to="prog/new">+ 센터 프로그램</button><button class="btn primary sm" data-act="go" data-to="rental/new">+ 새 대여</button></div></div>' +
-      '<div class="seg" role="group" aria-label="보기">' + [['cal', '달력'], ['av', '잔여 확인'], ['list', '목록 · 반납']].map(function (t) {
-        return '<button data-act="rview" data-v="' + t[0] + '" class="' + (u.v === t[0] ? 'on' : '') + '" aria-pressed="' + (u.v === t[0]) + '">' + t[1] + '</button>';
-      }).join('') + '</div>' +
-      (u.v === 'list' ? '<div class="tabs" role="tablist">' + [['예약됨', '예약됨 ' + counts.res], ['대여중', '대여 중 ' + counts.out], ['지난', '지난 건']].map(function (t) {
-        return '<button role="tab" class="' + (u.tab === t[0] ? 'on' : '') + '" aria-selected="' + (u.tab === t[0]) + '" data-act="rtab" data-v="' + t[0] + '">' + t[1] + '</button>';
-      }).join('') + '</div>' : '') + '</div>';
+    return '<div class="top"><div class="row between"><h1>교구 대여</h1><button class="btn primary sm" data-act="go" data-to="rental/new">+ 새 대여</button></div>' +
+      '<div class="tabs" role="tablist">' + [['av', '문의 확인', 0], ['todo', '처리할 것', urgent], ['cal', '월간 계획', 0]].map(function (t) {
+        return '<button role="tab" class="' + (u.v === t[0] ? 'on' : '') + '" aria-selected="' + (u.v === t[0]) + '" data-act="rview" data-v="' + t[0] + '">' + t[1] + (t[2] ? ' <span class="chip red" style="height:20px;padding:0 7px">' + t[2] + '</span>' : '') + '</button>';
+      }).join('') + '</div></div>';
   }
 
-  function card(r, sel) {
+  function card(r, sel, compact) {
     var today = App.today(), di = Core.dueInfo(r, today);
     var chips = App.rentalChip(r);
     if (di.overdue) chips = '<span class="chip red">연체 ' + di.overdue + '일</span>';
@@ -31,24 +29,51 @@
     if (r.status !== '반납완료' && r.status !== '취소' && r.status !== '미수령' && !r.docOk) chips += ' <span class="chip amber">공문 확인 전</span>';
     var dates = r.status === '예약됨' ? '대여 ' + Core.shortDate(r.start) + ' · 반납 ' + Core.shortDate(r.due) : r.status === '반납완료' ? Core.shortDate(r.start) + ' ~ ' + Core.shortDate(r.returnedAt || r.due) : '반납 예정 ' + Core.shortDate(r.due);
     var act = '';
-    if (r.status === '예약됨') act = '<button class="btn dark sm" data-act="go" data-to="rental/' + esc(r.id) + '/handover">내주기</button>';
-    if (r.status === '대여중') act = '<button class="btn dark sm" data-act="go" data-to="rental/' + esc(r.id) + '/return">반납 받기</button>';
+    if (r.status === '예약됨') act = compact ? '<button class="btn sm" data-act="go" data-to="rental/' + esc(r.id) + '/edit">수정</button>' : '<button class="btn primary sm" data-act="go" data-to="rental/' + esc(r.id) + '/handover">내주기</button>';
+    if (r.status === '대여중') act = '<button class="btn sm ' + (di.overdue || di.days === 0 ? 'green' : '') + '" data-act="go" data-to="rental/' + esc(r.id) + '/return">반납 받기</button>';
+    if (di.overdue && r.phone) act = '<a class="btn sm" href="tel:' + esc(r.phone.replace(/[^\d+]/g, '')) + '">전화</a>' + act;
     return '<div class="card' + (di.overdue ? ' alert' : '') + '" style="' + (sel ? 'border:2px solid var(--blue)' : '') + '"><button class="ev" style="padding:0;border:0" data-act="go" data-to="rental/' + esc(r.id) + '"><div class="main"><div class="row between gap8"><span class="t">' + App.who(r) + '</span><span>' + chips + '</span></div><span class="s">' + App.sum(r.id, 3) + '</span></div></button>' +
       '<div class="row between"><span class="xs muted">' + esc(dates) + '</span>' + act + '</div></div>';
   }
 
-  function listHtml(rid) {
-    var u = ui(), rs = S.data.rentals.slice();
-    var list;
-    if (u.tab === '예약됨') list = rs.filter(function (r) { return r.status === '예약됨'; }).sort(function (a, b) { return a.start.localeCompare(b.start); });
-    else if (u.tab === '대여중') list = rs.filter(function (r) { return r.status === '대여중'; }).sort(function (a, b) { return a.due.localeCompare(b.due); });
-    else list = rs.filter(function (r) { return r.status === '반납완료' || r.status === '취소' || r.status === '미수령'; }).sort(function (a, b) { return (b.returnedAt || b.start).localeCompare(a.returnedAt || a.start); });
-    var shown = list.slice(0, u.n);
-    var h = '<div class="col gap8">';
-    if (u.tab === '대여중') h += '<span class="small muted">반납해야 할 건 · 반납 예정일이 빠른 순서</span>';
-    if (!shown.length) h += '<div class="card"><span class="muted">' + (u.tab === '예약됨' ? '예약된 대여가 없습니다.' : u.tab === '대여중' ? '대여 중인 건이 없습니다.' : '지난 건이 없습니다.') + '</span></div>';
-    shown.forEach(function (r) { h += card(r, r.id === rid); });
-    if (list.length > shown.length) h += '<button class="btn" data-act="morert">더 보기 (' + (list.length - shown.length) + '건 더 있어요)</button>';
+  /** 처리할 것: 연체 → 오늘 반납 → 오늘 내주기 → 곧 다가오는 예약(7일) → 대여 중 전체 → 지난 기록(접힘) */
+  function todoGroups() {
+    var today = App.today(), week = Core.addDays(today, 7), g = { overdue: [], retToday: [], outToday: [], soon: [], out: [], past: [] };
+    S.data.rentals.forEach(function (r) {
+      if (r.status === '대여중') {
+        if (r.due < today) g.overdue.push(r); else if (r.due === today) g.retToday.push(r); else g.out.push(r);
+      } else if (r.status === '예약됨') {
+        if (r.start <= today) g.outToday.push(r); else if (r.start <= week) g.soon.push(r); else g.out.push(r);
+      } else g.past.push(r);
+    });
+    g.overdue.sort(function (a, b) { return a.due.localeCompare(b.due); });
+    g.outToday.sort(function (a, b) { return a.start.localeCompare(b.start); });
+    g.soon.sort(function (a, b) { return a.start.localeCompare(b.start); });
+    g.out.sort(function (a, b) { return (a.status === '대여중' ? a.due : a.start).localeCompare(b.status === '대여중' ? b.due : b.start); });
+    g.past.sort(function (a, b) { return (b.returnedAt || b.start).localeCompare(a.returnedAt || a.start); });
+    return g;
+  }
+  function urgentCount(g) { return g.overdue.length + g.retToday.length + g.outToday.length; }
+
+  function sec(title, sub, color) { return '<div class="sec"><h2' + (color ? ' style="color:' + color + '"' : '') + '>' + esc(title) + '</h2>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</div>'; }
+
+  function todoHtml(rid) {
+    var u = ui(), g = todoGroups(), today = App.today(), h = '<div class="col gap8">';
+    if (!urgentCount(g) && !g.soon.length && !g.out.length) h += '<div class="card"><span class="muted">처리할 교구 대여가 없습니다.</span></div>';
+    if (g.overdue.length) { h += sec('연체', '반납 예정일이 지남', 'var(--red)'); g.overdue.forEach(function (r) { h += card(r, r.id === rid); }); }
+    if (g.retToday.length) { h += sec('오늘 반납 받을 것', Core.shortDate(today)); g.retToday.forEach(function (r) { h += card(r, r.id === rid); }); }
+    if (g.outToday.length) { h += sec('오늘 내줄 것', '예약된 수령'); g.outToday.forEach(function (r) { h += card(r, r.id === rid); }); }
+    if (g.soon.length) { h += sec('곧 다가오는 예약', '다음 7일'); g.soon.forEach(function (r) { h += card(r, r.id === rid); }); }
+    if (g.out.length) {
+      h += sec('대여 중 · 그 뒤 예약', g.out.length + '건 · 날짜순');
+      var shown = g.out.slice(0, u.n);
+      shown.forEach(function (r) { h += card(r, r.id === rid, true); });
+      if (g.out.length > shown.length) h += '<button class="btn" data-act="morert">' + (g.out.length - shown.length) + '건 더 보기</button>';
+    }
+    if (g.past.length) {
+      h += '<button class="btn" style="border-style:dashed;color:var(--muted);font-weight:500" data-act="rpast">' + (u.past ? '지난 기록 닫기' : '지난 기록 (반납 완료·취소) ' + g.past.length + '건 보기') + '</button>';
+      if (u.past) g.past.slice(0, 60).forEach(function (r) { h += card(r, r.id === rid, true); });
+    }
     return h + '</div>';
   }
 
@@ -80,7 +105,7 @@
     var u = ui(), items = Core.dayItems(S.data, u.d), imap = App.imap(), today = App.today();
     var order = { out: 0, ret: 1, prog: 2 };
     items.sort(function (a, b) { return order[a.kind] - order[b.kind]; });
-    var h = '<div class="row between" style="margin:4px 2px"><h2 style="font-size:16px">' + esc(Core.longDate(u.d)) + '</h2><button class="btn sm" data-act="avdate" data-d="' + u.d + '">이 날짜 교구 잔여 확인</button></div>';
+    var h = '<h2 style="font-size:16px;margin:4px 2px">' + esc(Core.longDate(u.d)) + '</h2>';
     if (!items.length) h += '<div class="card"><span class="muted">이 날은 내주기·반납·센터 프로그램이 없습니다.</span></div>';
     items.forEach(function (it) {
       if (it.kind === 'prog') {
@@ -101,6 +126,18 @@
     return h;
   }
 
+  function monthProgramsHtml() {
+    var u = ui(), imap = App.imap(), list = Core.groupPrograms(S.data.programs).filter(function (g) { return g.status !== '취소' && Core.monthOf(g.start) <= u.m && Core.monthOf(g.end) >= u.m; })
+      .sort(function (a, b) { return a.start.localeCompare(b.start); });
+    var buf = S.settings.programBuffer === undefined ? 7 : S.settings.programBuffer;
+    var h = '<div class="row between" style="margin:12px 2px 0"><h2 style="font-size:15px">이번 달 센터 프로그램</h2><button class="btn sm" data-act="go" data-to="prog/new?start=' + u.d + '">+ 센터 프로그램</button></div>';
+    if (!list.length) h += '<div class="card" style="border-style:dashed"><span class="muted small">이번 달에 잡아 둔 센터 프로그램이 없어요. 주말창의·방학 프로그램은 여기서 미리 잡아 두세요.</span></div>';
+    list.forEach(function (g) {
+      h += '<div class="ev res"><div class="stripe orange"></div><button class="mainbtn" data-act="go" data-to="prog/' + esc(g.id) + '"><div class="main"><span class="t">' + esc(g.name) + '</span><span class="s">' + esc(Core.shortDate(g.start) + ' ~ ' + Core.shortDate(g.end)) + ' · ' + esc(g.items.map(function (x) { return (imap[x.item] ? imap[x.item].name : x.item) + ' ' + x.qty; }).join(', ')) + (buf ? ' · 앞뒤 ' + buf + '일 대여 불가' : '') + '</span></div></button><button class="btn sm side" data-act="go" data-to="prog/' + esc(g.id) + '">수정</button></div>';
+    });
+    return h;
+  }
+
   App.acts.cday = function (el) { var u = ui(); u.d = el.getAttribute('data-d'); u.m = Core.monthOf(u.d); if (App.parseHash().path.length > 1) App.go('rentals'); else App.render(); };
   App.acts.cmonth = function (el) { var u = ui(); u.m = Core.addMonths(u.m, +el.getAttribute('data-d')); u.d = ''; App.render(); };
   App.acts.rview = function (el) { ui().v = el.getAttribute('data-v'); if (App.parseHash().path.length > 1) App.go('rentals'); else App.render(); };
@@ -110,25 +147,24 @@
   App.views.rentals = function (rid, mode, route) {
     var wide = App.wide(), u = ui();
     calInit(route);
-    var counts = { res: 0, out: 0 };
-    S.data.rentals.forEach(function (r) { if (r.status === '예약됨') counts.res++; else if (r.status === '대여중') counts.out++; });
     var pane = rid ? panes(rid, mode) : null;
     if (rid && !wide) {
       return { html: '<div class="page">' + App.appbar(pane.title, 'rentals', pane.right || '') + '<div class="body">' + pane.html + '</div></div>' + (pane.bar ? '<div class="bar-bottom"><div class="in">' + pane.bar + '</div></div>' : ''), tab: 'rentals', after: pane.after };
     }
     var cal = u.v === 'cal', av = u.v === 'av', h;
     var after = function () { if (av) App.avail.after(); if (pane && pane.after) pane.after(); };
-    var idle = cal ? '<div class="col gap8">' + dayListHtml() + '</div>' : av ? '<div id="av-res"></div>' : '<div class="card empty">왼쪽에서 건을 고르면 여기에 나옵니다.</div>';
+    var idle = cal ? '<div class="col gap8">' + dayListHtml() + monthProgramsHtml() + '</div>' : av ? '<div id="av-res"></div>' : '<div class="card empty">왼쪽에서 건을 고르면 여기에 나옵니다.</div>';
     var paneHtml = pane ? '<div class="card" style="gap:14px"><div class="row between"><h2 style="font-size:19px">' + esc(pane.title) + '</h2>' + (pane.right || '') + '</div>' + pane.html + (pane.bar ? '<div class="row gap8">' + pane.bar + '</div>' : '') + '</div>' : idle;
+    var head = header(urgentCount(todoGroups()));
     if (wide) {
-      h = '<div class="page wide"><div class="split">' + header(counts) + '<div class="left">' + (cal ? calHtml() : av ? '<div class="col gap12">' + App.avail.inputs() + '</div>' : '<div class="body" style="padding:0">' + listHtml(rid) + '</div>') + '</div><div class="paneR">' + paneHtml + '</div></div></div>';
+      h = '<div class="page wide"><div class="split">' + head + '<div class="left">' + (cal ? calHtml() : av ? '<div class="col gap12">' + App.avail.inputs() + '</div>' : '<div class="body" style="padding:0">' + todoHtml(rid) + '</div>') + '</div><div class="paneR">' + paneHtml + '</div></div></div>';
     } else {
-      h = '<div class="page">' + header(counts) + '<div class="body" style="' + (cal ? 'padding:12px 0' : '') + '">' + (cal ? calHtml() + '<div class="col gap8" style="padding:0 16px">' + dayListHtml() + '</div>' : av ? App.avail.inputs() + '<div id="av-res"></div>' : listHtml(rid)) + '</div></div><button class="fab" data-act="go" data-to="rental/new">+ 새 대여</button>';
+      h = '<div class="page">' + head + '<div class="body" style="' + (cal ? 'padding:12px 0' : '') + '">' + (cal ? calHtml() + '<div class="col gap8" style="padding:0 16px">' + dayListHtml() + monthProgramsHtml() + '</div>' : av ? App.avail.inputs() + '<div id="av-res"></div>' : todoHtml(rid)) + '</div></div>';
     }
     return { html: h, tab: 'rentals', after: after };
   };
 
-  App.acts.rtab = function (el) { ui().tab = el.getAttribute('data-v'); ui().n = 30; if (App.parseHash().path.length > 1) App.go('rentals'); else App.render(); };
+  App.acts.rpast = function () { ui().past = !ui().past; App.render(); };
   App.acts.morert = function () { ui().n += 30; App.render(); };
 
   /* ───────── 처리 화면(상세·내주기·반납) ───────── */
@@ -214,7 +250,7 @@
     App.run(el, function () {
       return App.api('handover', { id: id, lines: out, due: due, sign: sig.dataUrl() }).then(function (res) {
         App.apply(res); App.toast(r.school + ' 선생님께 내주었습니다.');
-        ui().tab = '대여중'; ui().v = 'list'; App.go('rentals');
+        ui().v = 'todo'; App.go('rentals');
       });
     });
   };
@@ -286,7 +322,7 @@
         App.apply(res);
         var done = App.rmap()[id].status === '반납완료';
         App.toast(done ? '반납이 완료되었습니다.' : '일부만 반납 처리했습니다. 나머지는 대여 중으로 남아요.');
-        ui().tab = done ? '지난' : '대여중'; ui().v = 'list'; App.go('rentals');
+        ui().v = 'todo'; App.go('rentals');
       });
     });
   };
@@ -424,7 +460,7 @@
         App.apply(res);
         var nid = res.rentals[0].id;
         if (mode === 'now') { App.toast('예약을 저장했습니다. 서명을 받아 주세요.'); App.go('rental/' + nid + '/handover'); } else {
-          App.toast(F.id ? '수정했습니다.' : '대여 예약을 저장했습니다. 공문이 오면 브리핑에서 확인해 주세요.'); ui().tab = '예약됨'; App.go('rentals', { m: Core.monthOf(F.start), d: F.start });
+          App.toast(F.id ? '수정했습니다.' : '대여 예약을 저장했습니다. 공문이 오면 브리핑에서 확인해 주세요.'); ui().v = 'todo'; App.go('rentals');
         }
       });
     });
