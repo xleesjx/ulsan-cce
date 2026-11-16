@@ -128,6 +128,15 @@ async function draw(page) {
   const rowHa = page.locator('.ev', { hasText: '정바다' }).filter({ has: page.locator('[data-act=bcancel]') });
   ok(await rowHa.count() >= 1, '교구 예약됨 줄에도 [취소] 버튼');
 
+  // 1-3. 공문 확인 목록의 [수정]
+  await page.click('[data-act=go][data-to="rental/' + rC.id + '/edit"]');
+  await page.waitForSelector('#f-school');
+  ok((await page.inputValue('#f-school')) === '하늘초등학교' && /수정/.test(await page.textContent('.appbar')), '공문 확인 목록의 [수정] → 예약 수정 화면');
+  await page.goto(base);
+  await page.waitForSelector('.top h1');
+  const outRow = page.locator('[data-act=go][data-to="rental/' + rA.id + '"]');
+  ok(await outRow.count() >= 1, '이미 내준 건은 [수정] 대신 상세 화면으로');
+
   // 2. 공문 확인
   await page.fill('#doc-' + rC.id, '하늘-77');
   await page.click('[data-act=docok][data-id="' + rC.id + '"]');

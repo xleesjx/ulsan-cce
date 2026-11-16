@@ -21,6 +21,12 @@
     return 'rental/' + e.id + '/return';
   }
 
+  /** 공문 확인 목록의 [수정]: 예약 중인 교구는 바로 수정 화면, 이미 내준 교구는 상세, 교실은 예약 화면 */
+  function docEditTarget(d) {
+    if (d.type === '교실') return 'res/' + esc(d.id);
+    return d.status === '예약됨' ? 'rental/' + esc(d.id) + '/edit' : 'rental/' + esc(d.id);
+  }
+
   function eventRow(e, isToday, today) {
     var when = isToday ? (e.kind === 'room' ? (e.time === '00:00' && /종일/.test(e.title) ? '종일' : esc(e.time)) : '') : (Core.diffDays(today, e.date) === 1 ? '<b>내일</b>' : esc(Core.shortDate(e.date)).replace(' ', '<br>'));
     // 아직 시작하지 않은 예약(교실 예약, 교구 예약됨)은 바로 취소할 수 있게 함
@@ -45,7 +51,8 @@
         h += '<div class="col gap6" style="' + (i < b.docs.length - 1 ? 'padding-bottom:10px;border-bottom:1px solid var(--amber-line)' : '') + '">' +
           '<div class="row between gap8"><b style="font-size:14px">' + (d.type === '교실' ? '<span class="chip blue" style="margin-right:6px">교실</span>' : '') + esc(d.title) + '</b><span class="xs b" style="color:' + (hot ? 'var(--red)' : 'var(--amber)') + ';white-space:nowrap">' + lab + '</span></div>' +
           '<span class="small" style="color:var(--soft)">' + esc(d.sub) + '</span>' +
-          '<div class="row gap8"><input class="grow" id="doc-' + esc(d.id) + '" aria-label="공문번호" placeholder="공문번호 (없으면 비워 두세요)" style="height:40px;border:1px solid #D0D6DE;border-radius:10px;padding:0 10px;font-size:14px;min-width:0">' +
+          '<div class="row gap8"><input class="grow" id="doc-' + esc(d.id) + '" aria-label="공문번호" placeholder="공문번호 (선택)" style="height:40px;border:1px solid #D0D6DE;border-radius:10px;padding:0 10px;font-size:14px;min-width:0">' +
+          '<button class="btn sm" data-act="go" data-to="' + docEditTarget(d) + '" aria-label="내용 수정">수정</button>' +
           '<button class="btn dark sm" style="background:var(--amber);border-color:var(--amber)" data-act="docok" data-type="' + d.type + '" data-id="' + esc(d.id) + '">공문 왔어요</button></div></div>';
       });
       h += '</section>';
