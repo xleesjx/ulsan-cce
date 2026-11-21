@@ -281,6 +281,8 @@
       if (!box) return;
       box.hidden = false;
       google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ko' });
+      var link = document.querySelector('[data-act=lkadmin]');
+      if (link) link.hidden = true; // 버튼이 떠 있으면 '관리자 로그인' 글자는 숨김
     });
   };
   function openGoogle() {
@@ -438,8 +440,18 @@
     drawNav();
     var key = route.path.join('/');
     if (key !== lastPath) { window.scrollTo(0, 0); lastPath = key; }
-    if (out.after) out.after(view);
+    if (out.after) {
+      try { out.after(view); } catch (e) { showErr(e); }
+    }
   }
+  /** 화면 오류를 F12 없이도 볼 수 있게 화면 아래에 알려 줍니다 */
+  function showErr(e) {
+    var msg = (e && (e.message || e.reason && e.reason.message)) || String(e);
+    console.error(e);
+    App.toast('화면 오류: ' + msg, true);
+  }
+  window.addEventListener('error', function (e) { if (e.error || e.message) showErr(e.error || e.message); });
+  window.addEventListener('unhandledrejection', function (e) { var r = e.reason; if (r && r.code) return; showErr(r); });
   App.render = render;
 
   /* ───────── 눌림·입력 처리 (화면 어디서든 data- 속성으로) ───────── */
