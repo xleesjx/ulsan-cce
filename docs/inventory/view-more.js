@@ -227,23 +227,33 @@
         after: function () { App.googleButton('gbtn-admin', function () { App.toast('관리자로 확인했습니다.'); App.render(); }); } };
     }
     var left = Math.max(1, Math.round((S.admin.until - Date.now()) / 60000));
-    var h = top + '<div class="card row between"><span class="small"><b>' + esc(S.admin.name || '관리자') + '</b> <span class="muted">' + esc(S.admin.email) + ' · ' + left + '분 남음</span></span><button class="btn sm" data-act="adend">확인 끝내기</button></div>' + App.versionNotice() +
-      '<div id="adbody"><div class="loader"><div class="spin"></div>불러오는 중…</div></div></div></div>';
+    var h = top + '<div class="card"><div class="row between gap8"><span class="small"><b>' + esc(S.admin.name || '관리자') + '</b> <span class="muted">' + esc(S.admin.email) + ' · ' + left + '분 남음</span></span><button class="btn sm" data-act="adend">확인 끝내기</button></div></div>' + App.versionNotice() +
+      '<div id="adbody" class="col gap12"></div></div></div>';
+    // 서버에서 직원 이메일·시트 주소를 받기 전에도 화면을 먼저 그립니다 (못 받아도 접속 코드는 바꿀 수 있게)
+    if (!AD.info) AD.info = { staff: S.staff, sheetUrl: S.sheetUrl, scriptUrl: S.scriptUrl, hasCode: null, loading: true };
     return { html: h, tab: 'more', after: function () {
+      drawAdmin();
       var fill = function (info) { AD.info = info; S.sheetUrl = info.sheetUrl || S.sheetUrl; S.scriptUrl = info.scriptUrl || S.scriptUrl; drawAdmin(); };
       App.adminApi('adminInfo').then(fill, function (e) {
         if (e.code === 'BAD_ACTION') { fill({ staff: S.staff, sheetUrl: S.sheetUrl, scriptUrl: S.scriptUrl, hasCode: false, old: true }); return; }
-        App.toast(e.message, true);
-        if (e.code === 'ADMIN') App.render();
+        if (e.code === 'ADMIN') { App.toast(e.message, true); App.render(); return; }
+        AD.info.loading = false; AD.info.error = e.message; drawAdmin();
       });
     } };
   };
   function drawAdmin() {
     var box = document.getElementById('adbody'), info = AD.info;
     if (!box || !info) return;
-    box.innerHTML = '<section class="card"><h2>앱 접속 코드 (4자리)</h2>' +
+    try { box.innerHTML = adminBody(info); } catch (e) {
+      box.innerHTML = '<div class="card"><b style="color:var(--red)">관리자 화면을 그리지 못했습니다</b><span class="small muted">' + esc(e.message) + '</span></div>';
+    }
+  }
+  function adminBody(info) {
+    return (info.error ? '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>서버에서 관리 정보를 받지 못했습니다.</b> ' + esc(info.error) + ' <button class="textbtn" style="padding:0;min-height:0;color:var(--red);text-decoration:underline" data-act="adretry">다시 시도</button></div>' : '') +
+      '<section class="card"><h2>앱 접속 코드 (4자리)</h2>' +
       (info.old ? '<span class="small" style="color:var(--red)">서버 코드를 먼저 업데이트해야 접속 코드를 쓸 수 있어요. 아래 [코드 업데이트 방법]을 따라 해 주세요.</span>' :
-        '<span class="small ' + (info.hasCode ? 'muted' : '') + '" style="' + (info.hasCode ? '' : 'color:var(--red);font-weight:700') + '">' + (info.hasCode ? '접속 코드가 정해져 있어요. 보안을 위해 지금 코드는 보여 주지 않습니다.' : '아직 접속 코드가 없어요. 직원들이 앱을 열려면 코드를 먼저 정해 주세요.') + '</span>' +
+        (info.hasCode === null ? '<span class="small muted">코드 상태를 확인하는 중…</span>' :
+          '<span class="small ' + (info.hasCode ? 'muted' : '') + '" style="' + (info.hasCode ? '' : 'color:var(--red);font-weight:700') + '">' + (info.hasCode ? '접속 코드가 정해져 있어요. 보안을 위해 지금 코드는 보여 주지 않습니다.' : '아직 접속 코드가 없어요. 직원들이 앱을 열려면 코드를 먼저 정해 주세요.') + '</span>') +
         '<div class="grid2"><label class="f">새 코드<input id="ad-c1" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label><label class="f">한 번 더<input id="ad-c2" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label></div>' +
         '<button class="btn primary" data-act="adcode">' + (info.hasCode ? '접속 코드 바꾸기' : '접속 코드 정하기') + '</button>' +
         '<span class="xs muted">바꾸면 코드로 들어와 있던 모든 기기가 바로 잠깁니다. 직원들에게 새 코드를 알려 주세요. 0000·1234처럼 쉬운 코드는 쓸 수 없어요. 코드를 10번 틀리면 10분 동안 모든 기기에서 입력이 막히고 변경기록에 남습니다.</span>') + '</section>' +
@@ -252,14 +262,15 @@
       '<section class="card"><h2>엑셀로 내려받기</h2>' + csvButtons() + '<span class="xs muted">기간은 [대여 실적] 화면에서 고른 기간(처음에는 올해)입니다.</span></section>' +
       adminHtml();
   }
-  App.acts.adend = function () { S.admin = null; App.toast('관리자 확인을 끝냈습니다.'); App.render(); };
+  App.acts.adretry = function () { AD.info = null; App.render(); };
+  App.acts.adend = function () { S.admin = null; AD.info = null; App.toast('관리자 확인을 끝냈습니다.'); App.render(); };
   App.acts.adcode = function (el) {
     var c1 = document.getElementById('ad-c1').value.trim(), c2 = document.getElementById('ad-c2').value.trim();
     if (!/^\d{4}$/.test(c1)) { App.toast('숫자 4자리로 적어 주세요.', true); return; }
     if (c1 !== c2) { App.toast('두 칸의 코드가 다릅니다.', true); return; }
     App.run(el, function () {
       return App.adminApi('setAccessCode', { code: c1 }).then(function () {
-        AD.info.hasCode = true; drawAdmin();
+        AD.info.hasCode = true; AD.info.old = false; drawAdmin();
         App.toast('접속 코드를 정했습니다. 다른 기기는 새 코드로 다시 들어와야 해요.');
       }, function (e) { if (e.code === 'ADMIN') App.render(); throw e; });
     });
