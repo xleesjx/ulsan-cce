@@ -25,7 +25,7 @@
   /* 서버 코드 자동 업데이트: GitHub 최신 코드로 Apps Script를 바꾸고 배포까지 (관리자만) */
   var UPD = { state: 'idle', r: null, err: null, code: '' };
   function updHtml() {
-    var h = '<section class="card" id="ad-upd"><h2>서버 코드 자동 업데이트</h2>';
+    var h = '<section class="card" id="mgr-upd"><h2>서버 코드 자동 업데이트</h2>';
     if (UPD.state === 'checking') h += '<span class="small muted">GitHub의 최신 서버 코드를 확인하는 중…</span>';
     else if (UPD.state === 'running') h += '<div class="row gap8"><div class="spin" style="width:20px;height:20px;margin:0"></div><span class="small b">업데이트하고 배포하는 중… (30초쯤 걸려요. 창을 닫지 마세요)</span></div>';
     else if (UPD.state === 'done') h += '<span class="small" style="color:var(--green-ink);font-weight:700">서버 코드를 ' + esc(UPD.r.latest) + '(으)로 바꾸고 배포했습니다.</span><span class="xs muted">1분쯤 뒤 [최신으로 새로고침]을 누르면 반영돼요.</span><button class="btn" data-act="updreload">최신으로 새로고침</button>';
@@ -49,7 +49,7 @@
       '<li>위쪽 함수 칸에서 <b>prepareUpdate</b>를 고르고 <b>▶ 실행</b> → 권한 창에서 <b>허용</b>합니다.</li>' +
       '<li><b>배포 → 배포 관리 → ✏️ → 새 버전 → 배포</b>를 한 번 합니다. 다음부터는 이 버튼으로 끝납니다.</li></ol></div>';
   }
-  function drawUpd() { var el = document.getElementById('ad-upd'); if (el) el.outerHTML = updHtml(); }
+  function drawUpd() { var el = document.getElementById('mgr-upd'); if (el) el.outerHTML = updHtml(); }
   function updCheck() {
     UPD.state = 'checking'; drawUpd();
     return App.adminApi('serverUpdate', { check: true }).then(function (r) { UPD.state = 'ready'; UPD.r = r; drawUpd(); }, updFail);
@@ -281,7 +281,7 @@
     }
     var left = Math.max(1, Math.round((S.admin.until - Date.now()) / 60000));
     var h = top + '<div class="card"><div class="row between gap8"><span class="small"><b>' + esc(S.admin.name || '관리자') + '</b> <span class="muted">' + esc(S.admin.email) + ' · ' + left + '분 남음</span></span><button class="btn sm" data-act="adend">확인 끝내기</button></div></div>' + App.versionNotice() +
-      '<div id="adbody" class="col gap12"></div></div></div>';
+      '<div id="mgr-body" class="col gap12"></div></div></div>';
     // 서버에서 직원 이메일·시트 주소를 받기 전에도 화면을 먼저 그립니다 (못 받아도 접속 코드는 바꿀 수 있게)
     if (!AD.info) AD.info = { staff: S.staff, sheetUrl: S.sheetUrl, scriptUrl: S.scriptUrl, hasCode: null, loading: true };
     return { html: h, tab: 'more', after: function () {
@@ -296,7 +296,7 @@
     } };
   };
   function drawAdmin() {
-    var box = document.getElementById('adbody'), info = AD.info;
+    var box = document.getElementById('mgr-body'), info = AD.info;
     if (!box || !info) return;
     try { box.innerHTML = adminBody(info); } catch (e) {
       box.innerHTML = '<div class="card"><b style="color:var(--red)">관리자 화면을 그리지 못했습니다</b><span class="small muted">' + esc(e.message) + '</span></div>';
@@ -308,7 +308,7 @@
       (info.old ? '<span class="small" style="color:var(--red)">서버 코드를 먼저 업데이트해야 접속 코드를 쓸 수 있어요. 아래 [코드 업데이트 방법]을 따라 해 주세요.</span>' :
         (info.hasCode === null ? '<span class="small muted">코드 상태를 확인하는 중…</span>' :
           '<span class="small ' + (info.hasCode ? 'muted' : '') + '" style="' + (info.hasCode ? '' : 'color:var(--red);font-weight:700') + '">' + (info.hasCode ? '접속 코드가 정해져 있어요. 보안을 위해 지금 코드는 보여 주지 않습니다.' : '아직 접속 코드가 없어요. 직원들이 앱을 열려면 코드를 먼저 정해 주세요.') + '</span>') +
-        '<div class="grid2"><label class="f">새 코드<input id="ad-c1" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label><label class="f">한 번 더<input id="ad-c2" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label></div>' +
+        '<div class="grid2"><label class="f">새 코드<input id="mgr-c1" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label><label class="f">한 번 더<input id="mgr-c2" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label></div>' +
         '<button class="btn primary" data-act="adcode">' + (info.hasCode ? '접속 코드 바꾸기' : '접속 코드 정하기') + '</button>' +
         '<span class="xs muted">바꾸면 코드로 들어와 있던 모든 기기가 바로 잠깁니다. 직원들에게 새 코드를 알려 주세요. 0000·1234처럼 쉬운 코드는 쓸 수 없어요. 코드를 10번 틀리면 10분 동안 모든 기기에서 입력이 막히고 변경기록에 남습니다.</span>') + '</section>' +
       '<section class="card"><h2>직원 (' + (info.staff || []).length + '명)</h2>' + (info.staff || []).map(function (s) { return '<div class="row between small"><span><b>' + esc(s.name) + '</b> <span class="muted">' + esc(s.email) + '</span></span><span class="chip gray">' + esc(s.role || '직원') + '</span></div>'; }).join('') +
@@ -319,7 +319,7 @@
   App.acts.adretry = function () { AD.info = null; App.render(); };
   App.acts.adend = function () { S.admin = null; AD.info = null; UPD.state = 'idle'; App.toast('관리자 확인을 끝냈습니다.'); App.render(); };
   App.acts.adcode = function (el) {
-    var c1 = document.getElementById('ad-c1').value.trim(), c2 = document.getElementById('ad-c2').value.trim();
+    var c1 = document.getElementById('mgr-c1').value.trim(), c2 = document.getElementById('mgr-c2').value.trim();
     if (!/^\d{4}$/.test(c1)) { App.toast('숫자 4자리로 적어 주세요.', true); return; }
     if (c1 !== c2) { App.toast('두 칸의 코드가 다릅니다.', true); return; }
     App.run(el, function () {

@@ -536,14 +536,14 @@ async function draw(page) {
   await shot('13a-관리자확인');
   await page.waitForFunction(() => typeof window.__gsiCb === 'function');
   await page.evaluate((c) => window.__gsiCb({ credential: c }), jwt);
-  await page.waitForSelector('#ad-c1');
+  await page.waitForSelector('#mgr-c1');
   ok(await page.locator('a[href*="script.google.com/home/projects/SCRIPT123/edit"]').count() === 1, '관리자 메뉴에 Apps Script 열기 버튼');
   ok(await page.locator('a[href*="docs.google.com/spreadsheets"]').count() === 1, '관리자 메뉴에 구글 시트 열기 버튼');
   ok(await page.locator('a[href*="raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/Code.gs"]').count() === 1 && await page.locator('a[href$="Core.gs"]').count() === 1, '새 Code.gs·Core.gs 열기 버튼');
   ok(/서버 코드가 최신/.test(await page.textContent('#view')) && !(await page.evaluate(() => window.App.outdated())), '서버 코드가 최신이면 안내만');
   ok(/owner@example\.com/.test(await page.textContent('#view')) && await page.locator('[data-act=stcsv]').count() === 3, '관리자 메뉴에 직원 이메일과 엑셀 내려받기');
-  await page.waitForSelector('#ad-upd .btn, #ad-upd [style*="red"]');
-  ok(/자동 업데이트/.test(await page.textContent('#ad-upd')), '관리자 메뉴에 서버 코드 자동 업데이트');
+  await page.waitForSelector('#mgr-upd .btn, #mgr-upd [style*="red"]');
+  ok(/자동 업데이트/.test(await page.textContent('#mgr-upd')), '관리자 메뉴에 서버 코드 자동 업데이트');
   // 가짜 GitHub에 새 버전이 있으면 [지금 업데이트]
   {
     const src = fs.readFileSync(path.join(__dirname, '../gas/Code.gs'), 'utf8').replace(/var CODE_VERSION = \d+;/, 'var CODE_VERSION = 99;');
@@ -552,16 +552,16 @@ async function draw(page) {
     env.ctx.UrlFetchApp.fetch = (url, opt) => url.includes('raw.githubusercontent.com') ? { getResponseCode: () => 200, getContentText: () => (url.includes('Core.gs') ? core : src) } : f0(url, opt);
     await page.click('[data-act=updcheck]').catch(() => {});
     await page.waitForSelector('[data-act=updrun]');
-    ok(/GitHub 최신 99/.test(await page.textContent('#ad-upd')), '새 버전이 있으면 [지금 업데이트] 버튼');
+    ok(/GitHub 최신 99/.test(await page.textContent('#mgr-upd')), '새 버전이 있으면 [지금 업데이트] 버튼');
     env.ctx.UrlFetchApp.fetch = f0;
   }
   await shot('13-관리자메뉴');
   // 쉬운 코드는 거절, 새 코드로 바꾸기
-  await page.fill('#ad-c1', '1234'); await page.fill('#ad-c2', '1234');
+  await page.fill('#mgr-c1', '1234'); await page.fill('#mgr-c2', '1234');
   await page.click('[data-act=adcode]');
   await page.waitForFunction(() => /쉬운 코드/.test(document.getElementById('toast').textContent));
   ok(true, '쉬운 코드는 거절 안내');
-  await page.fill('#ad-c1', '3691'); await page.fill('#ad-c2', '3691');
+  await page.fill('#mgr-c1', '3691'); await page.fill('#mgr-c2', '3691');
   await page.click('[data-act=adcode]');
   await page.waitForFunction(() => /접속 코드를 정했습니다/.test(document.getElementById('toast').textContent));
   ok(true, '관리자 메뉴에서 접속 코드 변경');
