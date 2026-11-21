@@ -1,11 +1,11 @@
-/* 더보기: 메뉴 · 수리 대기 · 실적 · 점검 · 설정 */
+/* 더보기: 메뉴 · 수리 대기 · 실적 · 점검 · 설정 · 관리자 메뉴(구글 로그인) */
 (function () {
   'use strict';
   var App = window.App, esc = App.esc, S = App.S;
 
   /* ───────── 더보기 메뉴 ───────── */
 
-  /** 구글 시트·Apps Script 바로가기와 코드 업데이트 방법 */
+  /** 구글 시트·Apps Script 바로가기와 코드 업데이트 방법 (관리자 메뉴 안) */
   function adminHtml() {
     var r = App.repo(), raw = 'https://raw.githubusercontent.com/' + r.owner + '/' + r.name + '/main/apps/inventory/gas/';
     function link(href, text) { return '<a class="btn" href="' + esc(href) + '" target="_blank" rel="noopener">' + text + '</a>'; }
@@ -27,13 +27,13 @@
     function entry(icon, title, sub, act, to, badge) {
       return '<button class="item" data-act="' + act + '" data-to="' + to + '"><span style="color:var(--blue)">' + App.icon(icon, 24) + '</span><div class="grow col"><b>' + esc(title) + '</b><span class="xs muted">' + esc(sub) + '</span></div>' + (badge ? '<span class="chip red">' + badge + '</span>' : '') + '<span class="muted">' + App.icon('right', 18) + '</span></button>';
     }
-    var h = '<div class="page"><div class="top"><h1>더보기</h1><span class="sub">' + esc(S.user.name) + ' 선생님 · ' + esc(S.user.email) + '</span></div><div class="body"><div class="list">' +
+    var h = '<div class="page"><div class="top"><h1>더보기</h1><span class="sub">' + (S.actor ? '이 기기 처리 직원: ' + esc(S.actor) : '처리 직원은 내주기·반납·예약 화면에서 고릅니다') + '</span></div><div class="body">' + App.versionNotice() + '<div class="list">' +
       entry('tool', '수리 대기·분실', '고장 난 교구를 처리하고 기록을 봐요', 'go', 'more/repairs', waiting ? waiting + '건' : '') +
       entry('check', '점검', '학기말 등에 물품·교실을 하나씩 확인해요', 'go', 'more/inspect', '') +
       entry('chart', '대여 실적', '교구·교실 이용 현황과 엑셀 내려받기', 'go', 'more/stats', '') +
-      entry('gear', '설정·안내', '직원, 교실, 보관위치 확인', 'go', 'more/settings', '') + '</div>' +
-      adminHtml() +
-      '<div class="row gap8"><button class="btn block" data-act="syncnow">' + App.icon('swap', 18) + ' 최신으로 새로고침</button><button class="btn block" data-act="logout">' + App.icon('out', 18) + ' 로그아웃</button></div></div></div>';
+      entry('gear', '설정·안내', '교실, 보관위치, 반납 기본 일수 확인', 'go', 'more/settings', '') +
+      entry('gear', '관리자 메뉴', '구글 로그인 필요 · 접속 코드, 직원, 엑셀 내려받기, 코드 업데이트', 'go', 'more/admin', App.adminValid() ? '확인됨' : '') + '</div>' +
+      '<div class="row gap8"><button class="btn block" data-act="syncnow">' + App.icon('swap', 18) + ' 최신으로 새로고침</button><button class="btn block" data-act="logout">' + App.icon('out', 18) + ' 지금 잠그기</button></div></div></div>';
     return { html: h, tab: 'more' };
   };
   App.acts.syncnow = function (el) { App.run(el, function () { return App.reload(false).then(function () { App.toast('최신 내용으로 바꿨습니다.'); }); }); };
@@ -91,9 +91,13 @@
       '<section class="card"><h2>학교별 대여</h2>' + table(['학교', '건수'], s.schools.slice(0, 12).map(function (x) { return [x.name, x.count]; })) + '</section>' +
       '<section class="card"><h2>교실별 사용</h2>' + table(['교실', '건수', '시간'], s.rooms.map(function (x) { return [x.name, x.count, (x.minutes ? (Math.round(x.minutes / 6) / 10) + '시간' : '-')]; })) + '</section>' +
       '<section class="card"><h2>종류별 교실 예약</h2>' + table(['종류', '건수', '시간'], s.kinds.map(function (x) { return [x.name, x.count, (x.minutes ? (Math.round(x.minutes / 6) / 10) + '시간' : '-')]; })) + '<span class="xs muted">시간은 시작·끝 시간을 적은 예약만 더했어요. 종일은 시간에 넣지 않았습니다.</span></section>' +
-      '<section class="card"><h2>엑셀로 내려받기</h2><div class="col gap8"><button class="btn" data-act="stcsv" data-k="rent">' + App.icon('down', 16) + ' 교구 대여 기록</button><button class="btn" data-act="stcsv" data-k="room">' + App.icon('down', 16) + ' 교실 예약 기록</button><button class="btn" data-act="stcsv" data-k="item">' + App.icon('down', 16) + ' 물품 목록표 (전체)</button></div><span class="xs muted">위에서 고른 기간의 기록이 내려받아져요. 엑셀에서 바로 열립니다.</span></section></div></div>';
+      '<section class="card"><h2>엑셀로 내려받기</h2>' + (App.adminValid() ? csvButtons() + '<span class="xs muted">위에서 고른 기간의 기록이 내려받아져요. 엑셀에서 바로 열립니다.</span>' :
+        '<span class="small muted">연락처가 들어 있어서 관리자 확인(구글 로그인) 뒤에 내려받을 수 있어요.</span><button class="btn" data-act="go" data-to="more/admin">관리자 메뉴로 가기</button>') + '</section></div></div>';
     return { html: h, tab: 'more' };
   };
+  function csvButtons() {
+    return '<div class="col gap8"><button class="btn" data-act="stcsv" data-k="rent">' + App.icon('down', 16) + ' 교구 대여 기록</button><button class="btn" data-act="stcsv" data-k="room">' + App.icon('down', 16) + ' 교실 예약 기록</button><button class="btn" data-act="stcsv" data-k="item">' + App.icon('down', 16) + ' 물품 목록표 (전체)</button></div>';
+  }
   function table(head, rows) {
     if (!rows.length) return '<span class="muted small">기록이 없습니다.</span>';
     return '<table class="tb"><thead><tr>' + head.map(function (t, i) { return '<th class="' + (i ? 'n' : '') + '">' + t + '</th>'; }).join('') + '</tr></thead><tbody>' +
@@ -105,6 +109,7 @@
     if (Core.validDate(f) && Core.validDate(t) && f <= t) { var u = stRange(); u.from = f; u.to = t; App.render(); }
   };
   App.acts.stcsv = function (el) {
+    if (!App.adminValid()) { App.toast('관리자 확인(구글 로그인)이 필요합니다.', true); App.go('more/admin'); return; }
     var u = stRange(), k = el.getAttribute('data-k'), imap = App.imap(), rows;
     if (k === 'rent') {
       rows = [['대여번호', '학교', '선생님', '연락처', '대여일', '반납예정일', '반납완료일', '상태', '공문', '교구', '수량', '정상반납', '고장', '분실']];
@@ -202,12 +207,61 @@
   App.views.settings = function () {
     var st = S.settings;
     var h = '<div class="page">' + App.appbar('설정·안내', 'more') + '<div class="body">' +
-      '<section class="card flush"><div class="kv"><span>로그인 유지</span><span>' + (st.sessionDays || 14) + '일 (쓰는 동안 자동 연장)</span></div><div class="kv"><span>반납 기본 일수</span><span>' + st.returnDays + '일</span></div><div class="kv"><span>연락처 보관 기간</span><span>' + st.maskDays + '일 (반납 완료 후)</span></div><div class="kv"><span>센터 이름</span><span>' + esc(st.centerName) + '</span></div></section>' +
-      '<section class="card"><h2>직원 (' + S.staff.length + '명)</h2>' + S.staff.map(function (s) { return '<div class="row between small"><span><b>' + esc(s.name) + '</b> <span class="muted">' + esc(s.email) + '</span></span><span class="chip gray">' + esc(s.role || '직원') + '</span></div>'; }).join('') + '</section>' +
+      '<section class="card flush"><div class="kv"><span>앱 잠금</span><span>열 때마다 4자리 코드 · 5분 넘게 나가 있거나 15분 동안 안 쓰면 다시 잠김</span></div><div class="kv"><span>반납 기본 일수</span><span>' + st.returnDays + '일</span></div><div class="kv"><span>연락처 보관 기간</span><span>' + st.maskDays + '일 (반납 완료 후)</span></div><div class="kv"><span>센터 이름</span><span>' + esc(st.centerName) + '</span></div></section>' +
+      '<section class="card"><h2>직원 (' + S.staffNames.length + '명)</h2><div class="row wrap gap6">' + S.staffNames.map(function (n) { return '<span class="chip gray">' + esc(n) + '</span>'; }).join('') + '</div><span class="xs muted">이메일과 직원 추가·삭제는 관리자 메뉴에서 봅니다.</span></section>' +
       '<section class="card"><h2>교실</h2>' + S.data.rooms.map(function (r) { return '<div class="row between small"><span>' + esc(r.short) + ' · ' + esc(r.name) + '</span><span class="muted">' + (r.priority ? '수업 우선 교실' : '') + '</span></div>'; }).join('') + '</section>' +
       '<section class="card"><h2>보관위치 목록</h2><div class="row wrap gap6">' + (st.locs || []).map(function (l) { return '<span class="chip gray">' + esc(l) + '</span>'; }).join('') + '</div></section>' +
-      '<section class="card"><h2>바꾸고 싶을 때</h2><p class="small" style="margin:0;color:var(--soft);line-height:1.7">직원 추가·삭제, 교실 추가, 보관위치 목록, 반납 기본 일수, 연락처 보관 기간은 구글 시트의 <b>직원</b>, <b>교실</b>, <b>설정</b> 탭에서 직접 고치면 됩니다. 고친 뒤 이 앱에서 [최신으로 새로고침]을 누르세요.</p>' +
-      (S.sheetUrl ? '<a class="btn" href="' + esc(S.sheetUrl) + '" target="_blank" rel="noopener">구글 시트 열기</a>' : '') + '</section></div></div>';
+      '<section class="card"><h2>바꾸고 싶을 때</h2><p class="small" style="margin:0;color:var(--soft);line-height:1.7">직원 추가·삭제, 교실 추가, 보관위치 목록, 반납 기본 일수, 연락처 보관 기간은 구글 시트의 <b>직원</b>, <b>교실</b>, <b>설정</b> 탭에서 직접 고치면 됩니다. 시트는 <b>관리자 메뉴</b>에서 열 수 있어요. 고친 뒤 이 앱에서 [최신으로 새로고침]을 누르세요.</p>' +
+      '<button class="btn" data-act="go" data-to="more/admin">관리자 메뉴로 가기</button></section></div></div>';
     return { html: h, tab: 'more' };
+  };
+
+  /* ───────── 관리자 메뉴: 들어올 때 구글 로그인으로 한 번 더 확인 (30분 유지) ───────── */
+
+  var AD = { info: null };
+  App.views.admin = function () {
+    var top = '<div class="page">' + App.appbar('관리자 메뉴', 'more') + '<div class="body">';
+    if (!App.adminValid()) {
+      AD.info = null;
+      return { html: top + '<section class="card"><h2>관리자 확인</h2><p class="small" style="margin:0;color:var(--soft);line-height:1.7">접속 코드, 직원 이메일, 연락처가 담긴 엑셀 내려받기, 서버 코드 업데이트는 <b>직원 탭에 등록된 구글 계정</b>으로 한 번 더 확인합니다. 확인은 30분 동안 유지되고, 앱을 닫으면 끝납니다.</p><div id="gbtn-admin" class="gbtn"></div></section></div></div>', tab: 'more',
+        after: function () { App.googleButton('gbtn-admin', function () { App.toast('관리자로 확인했습니다.'); App.render(); }); } };
+    }
+    var left = Math.max(1, Math.round((S.admin.until - Date.now()) / 60000));
+    var h = top + '<div class="card row between"><span class="small"><b>' + esc(S.admin.name || '관리자') + '</b> <span class="muted">' + esc(S.admin.email) + ' · ' + left + '분 남음</span></span><button class="btn sm" data-act="adend">확인 끝내기</button></div>' + App.versionNotice() +
+      '<div id="adbody"><div class="loader"><div class="spin"></div>불러오는 중…</div></div></div></div>';
+    return { html: h, tab: 'more', after: function () {
+      var fill = function (info) { AD.info = info; S.sheetUrl = info.sheetUrl || S.sheetUrl; S.scriptUrl = info.scriptUrl || S.scriptUrl; drawAdmin(); };
+      App.adminApi('adminInfo').then(fill, function (e) {
+        if (e.code === 'BAD_ACTION') { fill({ staff: S.staff, sheetUrl: S.sheetUrl, scriptUrl: S.scriptUrl, hasCode: false, old: true }); return; }
+        App.toast(e.message, true);
+        if (e.code === 'ADMIN') App.render();
+      });
+    } };
+  };
+  function drawAdmin() {
+    var box = document.getElementById('adbody'), info = AD.info;
+    if (!box || !info) return;
+    box.innerHTML = '<section class="card"><h2>앱 접속 코드 (4자리)</h2>' +
+      (info.old ? '<span class="small" style="color:var(--red)">서버 코드를 먼저 업데이트해야 접속 코드를 쓸 수 있어요. 아래 [코드 업데이트 방법]을 따라 해 주세요.</span>' :
+        '<span class="small ' + (info.hasCode ? 'muted' : '') + '" style="' + (info.hasCode ? '' : 'color:var(--red);font-weight:700') + '">' + (info.hasCode ? '접속 코드가 정해져 있어요. 보안을 위해 지금 코드는 보여 주지 않습니다.' : '아직 접속 코드가 없어요. 직원들이 앱을 열려면 코드를 먼저 정해 주세요.') + '</span>' +
+        '<div class="grid2"><label class="f">새 코드<input id="ad-c1" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label><label class="f">한 번 더<input id="ad-c2" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="숫자 4자리"></label></div>' +
+        '<button class="btn primary" data-act="adcode">' + (info.hasCode ? '접속 코드 바꾸기' : '접속 코드 정하기') + '</button>' +
+        '<span class="xs muted">바꾸면 코드로 들어와 있던 모든 기기가 바로 잠깁니다. 직원들에게 새 코드를 알려 주세요. 0000·1234처럼 쉬운 코드는 쓸 수 없어요. 코드를 10번 틀리면 10분 동안 모든 기기에서 입력이 막히고 변경기록에 남습니다.</span>') + '</section>' +
+      '<section class="card"><h2>직원 (' + (info.staff || []).length + '명)</h2>' + (info.staff || []).map(function (s) { return '<div class="row between small"><span><b>' + esc(s.name) + '</b> <span class="muted">' + esc(s.email) + '</span></span><span class="chip gray">' + esc(s.role || '직원') + '</span></div>'; }).join('') +
+      '<span class="xs muted">직원 탭의 사람은 관리자 메뉴에 들어올 수 있고, [처리 직원] 목록에 이름이 나옵니다. 추가·삭제는 구글 시트의 <b>직원</b> 탭에서 합니다.</span></section>' +
+      '<section class="card"><h2>엑셀로 내려받기</h2>' + csvButtons() + '<span class="xs muted">기간은 [대여 실적] 화면에서 고른 기간(처음에는 올해)입니다.</span></section>' +
+      adminHtml();
+  }
+  App.acts.adend = function () { S.admin = null; App.toast('관리자 확인을 끝냈습니다.'); App.render(); };
+  App.acts.adcode = function (el) {
+    var c1 = document.getElementById('ad-c1').value.trim(), c2 = document.getElementById('ad-c2').value.trim();
+    if (!/^\d{4}$/.test(c1)) { App.toast('숫자 4자리로 적어 주세요.', true); return; }
+    if (c1 !== c2) { App.toast('두 칸의 코드가 다릅니다.', true); return; }
+    App.run(el, function () {
+      return App.adminApi('setAccessCode', { code: c1 }).then(function () {
+        AD.info.hasCode = true; drawAdmin();
+        App.toast('접속 코드를 정했습니다. 다른 기기는 새 코드로 다시 들어와야 해요.');
+      }, function (e) { if (e.code === 'ADMIN') App.render(); throw e; });
+    });
   };
 })();

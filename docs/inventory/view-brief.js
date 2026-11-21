@@ -38,7 +38,7 @@
   App.views.brief = function () {
     var today = App.today(), f = S.ui.bf || 'all', lim = S.ui.bn || 10;
     var b = Core.briefing(S.data, today, f, lim);
-    var h = '<div class="page"><div class="top"><div class="row between"><div class="col"><span class="sub">' + esc(Core.longDate(today)) + '</span><h1>오늘의 브리핑</h1></div><span class="sub">' + esc(S.user.name) + ' 선생님</span></div>' +
+    var h = '<div class="page"><div class="top"><div class="row between"><div class="col"><span class="sub">' + esc(Core.longDate(today)) + '</span><h1>오늘의 브리핑</h1></div>' + (S.actor ? '<span class="sub">' + esc(S.actor) + ' 선생님</span>' : '') + '</div>' +
       '<div class="seg" role="group" aria-label="보기">' + [['all', '전체'], ['교구', '교구'], ['교실', '교실']].map(function (x) {
         return '<button data-act="bf" data-v="' + x[0] + '" class="' + (f === x[0] ? 'on' : '') + '" aria-pressed="' + (f === x[0]) + '">' + x[1] + '</button>';
       }).join('') + '</div></div><div class="body">' + App.versionNotice();

@@ -225,7 +225,8 @@
         return '<div class="qline"><span class="chk" id="hc-' + i + '" role="img" aria-label="확인됨">' + App.icon('check', 18).replace('stroke="currentColor"', 'stroke="#fff"') + '</span><b class="grow" style="font-size:' + (lg ? 18 : 16) + 'px">' + esc(it ? it.name : l.item) + '</b>' +
           App.stepper('hq-' + i, l.qty, { min: 0, max: l.qty, large: lg, inName: 'hq', attrs: ' data-i="' + i + '"' }) + '</div>';
       }).join('') + '<span class="xs muted">실제로 가져가는 수량이 다르면 숫자를 바꾸세요. 0이면 이 교구는 빠집니다.</span></div>' +
-      '<div class="card"><div class="row between"><h2>받는 분 서명</h2><button class="btn sm" data-act="sigclear">다시 쓰기</button></div>' + App.sigHtml(lg ? 240 : 190) + '<span class="xs muted">손가락(또는 마우스)으로 이 칸에 서명해 주세요.</span></div></div>';
+      '<div class="card"><div class="row between"><h2>받는 분 서명</h2><button class="btn sm" data-act="sigclear">다시 쓰기</button></div>' + App.sigHtml(lg ? 240 : 190) + '<span class="xs muted">손가락(또는 마우스)으로 이 칸에 서명해 주세요.</span></div>' +
+      '<div class="card">' + App.actorField('내준 직원') + '</div></div>';
     var bar = '<button class="btn block" data-act="rcancel" data-id="' + esc(r.id) + '" data-kind="미수령">취소</button><button class="btn primary block lg" data-act="dohand" data-id="' + esc(r.id) + '">내주기 완료</button>';
     return { title: '교구 내주기', html: h, bar: bar, after: function () { sig = App.sigPad(document.getElementById('sigbox')); } };
   }
@@ -246,6 +247,7 @@
     var out = lines.map(function (l, i) { return { item: l.item, qty: parseInt(document.getElementById('hq-' + i).value, 10) || 0 }; });
     if (!out.some(function (l) { return l.qty > 0; })) { App.toast('내줄 교구가 하나도 없어요.', true); return; }
     if (!sig || sig.isEmpty()) { App.toast('서명을 받아 주세요.', true); return; }
+    if (!App.needActor()) return;
     var due = document.getElementById('hdue-val').value;
     App.run(el, function () {
       return App.api('handover', { id: id, lines: out, due: due, sign: sig.dataUrl() }).then(function (res) {
@@ -272,7 +274,8 @@
           '<div class="row gap8"><label class="btn sm" style="cursor:pointer">' + App.icon('camera', 18) + ' 사진 찍기<input type="file" accept="image/*" capture="environment" hidden data-ch="rphoto" data-i="' + i + '"></label><span id="rph-' + i + '" class="xs muted"></span></div>' +
           '<span id="rxn-' + i + '" class="xs" style="color:var(--red)"></span></div></div>';
       }).join('') +
-      '<div class="tip blue">일부만 가져왔으면 숫자를 줄이세요. 나머지는 \'대여 중\'으로 남아요. 반납할 때는 서명을 받지 않습니다.</div></div>';
+      '<div class="tip blue">일부만 가져왔으면 숫자를 줄이세요. 나머지는 \'대여 중\'으로 남아요. 반납할 때는 서명을 받지 않습니다.</div>' +
+      '<div class="card">' + App.actorField('반납 받은 직원') + '</div></div>';
     var bar = '<button class="btn green block lg" data-act="doreturn" data-id="' + esc(r.id) + '">반납 완료</button>';
     return { title: '반납 받기', html: h, bar: bar };
   }
@@ -317,6 +320,7 @@
     });
     if (bad) { App.toast(bad, true); return; }
     if (!lines.length) { App.toast('반납할 수량을 입력해 주세요.', true); return; }
+    if (!App.needActor()) return;
     App.run(el, function () {
       return App.api('returnItems', { id: id, lines: lines }).then(function (res) {
         App.apply(res);
@@ -353,13 +357,14 @@
       if (pre && App.imap()[pre] && Core.isRentable(App.imap()[pre])) F.lines.push({ item: pre, qty: Math.max(1, parseInt(qq.qty, 10) || 1) });
     }
     var h = '<div class="page">' + App.appbar(r ? '대여 예약 수정' : '새 교구 대여', 'rentals') + '<form class="body" onsubmit="return false" autocomplete="off">' +
-      '<section class="card"><div class="row between"><span class="small muted">접수 직원 ' + esc(S.user.name) + ' (자동)</span><span class="chip amber">공문 확인 알림이 생겨요</span></div>' +
+      '<section class="card"><div class="row between"><span class="small b" style="color:var(--soft)">' + (r ? '접수 ' + esc(r.staff) : '새 대여') + '</span><span class="chip amber">공문 확인 알림이 생겨요</span></div>' +
       '<label class="f">학교명<input id="f-school" data-in="rschool" value="' + esc(F.school) + '" placeholder="글자나 초성(ㄱㄴ)으로 찾기" autocomplete="off"></label>' +
       '<div class="grid2"><label class="f">선생님 이름<input id="f-teacher" data-in="rtext" data-k="teacher" value="' + esc(F.teacher) + '"></label><label class="f">연락처<input id="f-phone" data-in="rtext" data-k="phone" inputmode="tel" value="' + esc(F.phone) + '" placeholder="010-0000-0000"></label></div></section>' +
       '<section class="card">' + App.dateInput('f-start', '대여일', F.start, App.quickStart(), 'rstart') + '<div style="height:1px;background:var(--line2)"></div><div id="duebox">' + App.dateInput('f-due', '반납 예정일', F.due, App.quickDue(F.start), 'rdue') + '</div></section>' +
       '<section class="card"><div class="row between"><h2>빌려줄 교구</h2><span class="xs muted" id="f-period"></span></div><div id="rlines"></div>' +
       '<label class="f" style="margin-top:4px"><span class="xs muted">교구 추가</span><input id="f-add" data-in="raddsearch" placeholder="+ 교구 이름이나 초성으로 검색해서 고르기" autocomplete="off"></label></section>' +
       '<label class="f" style="padding:0 4px">메모<input id="f-memo" data-in="rtext" data-k="memo" value="' + esc(F.memo) + '" placeholder="예: 11일 수업용, 배터리 여분 함께"></label>' +
+      '<section class="card">' + App.actorField(r ? '처리 직원' : '접수 직원') + '</section>' +
       '<div class="tip" id="f-tip"></div></form></div>' +
       '<div class="bar-bottom"><div class="in" id="f-btns"></div></div>';
     return { html: h, tab: 'rentals', after: function () { drawLines(); drawBtns(); } };
@@ -452,6 +457,7 @@
     if (!F.teacher.trim()) { App.toast('선생님 이름을 입력해 주세요.', true); return; }
     if (!Core.validDate(F.start) || !Core.validDate(F.due)) { App.toast('날짜를 확인해 주세요.', true); return; }
     if (F.due < F.start) { App.toast('반납 예정일이 대여일보다 빠릅니다.', true); return; }
+    if (!App.needActor()) return;
     var payload = { school: F.school, teacher: F.teacher, phone: F.phone, start: F.start, due: F.due, memo: F.memo, lines: F.lines.map(function (l) { return { item: l.item, qty: l.qty }; }) };
     var chk = Core.checkLines(S.data, App.idx(), payload.lines, F.start, F.due, F.id, App.today());
     if (chk.errors.length) { App.toast(chk.errors.join('\n'), true); return; }

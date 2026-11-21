@@ -349,51 +349,77 @@ let V1;
   eq(e.table('설정').length, n, '다시 불러와도 중복으로 추가되지 않음');
 })();
 
-/* 15. 로그인 표(기본 14일): 구글 로그인은 한 번, 그 뒤로는 센터 앱 전용 표 */
-(function sessions() {
+/* 15. 접속 코드(일반 업무)와 구글 로그인(관리) */
+(function access() {
   const e = createEnv({ now: new Date('2026-11-06T10:00:00+09:00') });
   e.ctx.setupSheets();
   const raw = (action, token, extra) => JSON.parse(e.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ action, token }, extra || {})) } }).s);
-  const L = raw('login', 'tok:owner@example.com');
-  ok(L.ok && /^s1\./.test(L.session) && L.days === 14, '구글 로그인 확인 뒤 로그인 표 발급(14일): ' + JSON.stringify(L).slice(0, 80));
-  // 표만으로 이용 (구글 확인 없이)
+  // 코드가 아직 없을 때
+  eq(raw('lockInfo').hasCode, false, '처음에는 접속 코드가 없음');
+  eq(raw('unlock', null, { code: '2580' }).code, 'NO_CODE', '코드가 없으면 관리자가 먼저 정하라고 안내');
+  // 관리자: 구글 로그인 → 30분짜리 표
+  const A = raw('login', 'tok:owner@example.com');
+  ok(A.ok && /^s1\./.test(A.session) && A.minutes === 30, '구글 로그인 뒤 30분짜리 관리자 표: ' + JSON.stringify(A).slice(0, 80));
   let calls = 0; const f0 = e.ctx.UrlFetchApp.fetch; e.ctx.UrlFetchApp.fetch = (...a) => { calls++; return f0(...a); };
-  const b = raw('boot', L.session);
-  ok(b.ok && b.user.email === 'owner@example.com' && calls === 0, '로그인 표로 이용하고 구글 확인을 다시 하지 않음');
-  eq([b.coreVersion >= 5, b.codeVersion >= 5, /script\.google\.com\/home\/projects\/SCRIPT123\/edit/.test(b.scriptUrl)], [true, true, true], '서버·코드 버전과 Apps Script 주소를 알려 줌');
-  eq(raw('login', L.session).session.slice(0, 3), 's1.', '표로 다시 발급도 가능');
-  eq(raw('boot', L.session.slice(0, -3) + 'abc').code, 'AUTH', '조금이라도 고친 표는 거절');
-  eq(raw('boot', 's1.엉터리.표').code, 'AUTH', '엉터리 표는 거절');
-  // 만료
-  e.setNow(new Date('2026-11-21T10:00:00+09:00'));
-  eq(raw('boot', L.session).code, 'AUTH', '14일이 지나면 만료');
+  eq(raw('setAccessCode', A.session, { code: '1234' }).code, 'INVALID', '너무 쉬운 코드는 거절');
+  eq(raw('setAccessCode', A.session, { code: '25a0' }).code, 'INVALID', '숫자 4자리가 아니면 거절');
+  ok(raw('setAccessCode', A.session, { code: '2580' }).ok, '관리자가 접속 코드를 정함');
+  eq(calls, 0, '관리자 표로 이용하고 구글 확인을 다시 하지 않음');
+  eq(raw('lockInfo').hasCode, true, '코드가 생김');
+  ok(e.table('변경기록').some((r) => r[2] === '접속 코드 변경'), '코드 변경이 변경기록에 남음');
+  ok(!JSON.stringify(e.props).includes('2580'), '코드 자체는 저장하지 않음(암호화한 값만)');
+  // 일반: 코드로 잠금 풀기 → 처음 화면 데이터까지 한 번에
+  const U = raw('unlock', null, { code: '2580', actor: '정하늘' });
+  ok(U.ok && /^s1\./.test(U.session) && U.items && U.rooms.length === 5, '코드가 맞으면 표와 처음 데이터를 한 번에 받음');
+  eq([U.user.admin, U.staff.length, U.sheetUrl, U.scriptUrl], [false, 0, '', ''], '코드 접속에는 직원 이메일·시트 주소를 주지 않음');
+  ok(U.staffNames.length >= 1, '[처리 직원] 목록용 이름은 받음');
+  ok(raw('boot', U.session).ok, '코드 표로 이용');
+  eq(raw('adminInfo', U.session).code, 'ADMIN', '코드 표로는 관리 화면 불가');
+  eq(raw('setAccessCode', U.session, { code: '1357' }).code, 'ADMIN', '코드 표로는 코드 변경 불가');
+  eq(raw('login', U.session).code, 'ADMIN', '코드 표로 관리자 표를 받을 수 없음');
+  const ai = raw('adminInfo', A.session);
+  ok(ai.ok && ai.staff[0].email === 'owner@example.com' && /script\.google\.com/.test(ai.scriptUrl), '관리 화면은 이메일·주소를 줌');
+  // 처리 직원 이름이 기록에 남음
+  const it = raw('itemSave', U.session, { actor: '정하늘', item: { cat: '창의교구', name: '시험 교구', qty: 3 } });
+  ok(it.ok && e.table('변경기록').some((r) => r[1] === '정하늘' && r[2] === '물품 등록'), '[처리 직원]에 적은 이름이 변경기록에 남음');
+  raw('itemSave', U.session, { item: { cat: '창의교구', name: '이름 없는 교구', qty: 1 } });
+  ok(e.table('변경기록').some((r) => r[1] === '공용 기기' && r[3] !== ''), '이름을 안 적으면 공용 기기');
+  raw('itemSave', A.session, { item: { cat: '창의교구', name: '관리자 교구', qty: 1 } });
+  ok(e.table('변경기록').some((r) => r[1] === 'owner' && r[3] !== ''), '관리자는 직원 탭 이름으로 기록: ' + JSON.stringify(e.table('변경기록').slice(-1)));
+  // 틀린 코드
+  const w = raw('unlock', null, { code: '1111' });
+  eq([w.code, w.extra.left], ['WRONG_CODE', 9], '틀리면 남은 횟수를 알려 줌');
+  for (let k = 0; k < 9; k++) raw('unlock', null, { code: '0001' });
+  eq(raw('unlock', null, { code: '2580' }).code, 'LOCKED', '10번 틀리면 맞는 코드도 잠시 막힘');
+  ok(e.table('변경기록').some((r) => r[2] === '접속 코드 잠김'), '잠김이 변경기록에 남음');
+  // 코드를 바꾸면 기존 코드 기기 모두 잠김
+  ok(raw('setAccessCode', A.session, { code: '1357' }).ok, '코드 변경');
+  eq(raw('boot', U.session).code, 'AUTH', '코드를 바꾸면 이전 코드로 들어온 기기는 잠김');
+  eq(raw('unlock', null, { code: '2580' }).code, 'WRONG_CODE', '이전 코드는 안 됨(잠김도 풀림)');
+  const U2 = raw('unlock', null, { code: '1357' });
+  ok(U2.ok, '새 코드로 접속');
+  // 만료: 코드 표 12시간, 관리자 표 30분
+  e.setNow(new Date('2026-11-06T10:40:00+09:00'));
+  eq(raw('adminInfo', A.session).code, 'AUTH', '관리자 표는 30분 뒤 만료');
+  ok(raw('boot', U2.session).ok, '코드 표는 그대로');
+  e.setNow(new Date('2026-11-06T22:30:00+09:00'));
+  eq(raw('boot', U2.session).code, 'AUTH', '코드 표는 12시간 뒤 만료');
   e.setNow(new Date('2026-11-06T10:00:00+09:00'));
-  // 쓰는 동안 자동 연장 (절반 이상 지났을 때 새 표)
-  eq(raw('boot', L.session).session, undefined, '막 발급된 표는 연장하지 않음');
-  e.setNow(new Date('2026-11-15T10:00:00+09:00'));
-  const r2 = raw('boot', L.session);
-  ok(r2.ok && /^s1\./.test(r2.session), '절반 넘게 지나면 쓸 때 새 표를 돌려줌(계속 로그인 유지)');
-  e.setNow(new Date('2026-11-25T10:00:00+09:00'));
-  ok(raw('boot', r2.session).ok, '새 표는 처음 표가 만료된 뒤에도 유효');
-  e.setNow(new Date('2026-11-06T10:00:00+09:00'));
-  // 직원 탭에서 빠지면 표가 있어도 바로 막힘
+  // 고친 표·옛날 표
+  eq(raw('boot', U2.session.slice(0, -3) + 'abc').code, 'AUTH', '조금이라도 고친 표는 거절');
+  const sign = (o) => { const p = Buffer.from(JSON.stringify(o)).toString('base64url'); return 's1.' + p + '.' + require('crypto').createHmac('sha256', e.props.SESSION_SECRET).update(p).digest('base64url'); };
+  eq(raw('boot', sign({ e: 'owner@example.com', x: Date.now() + 86400000, d: 14 })).code, 'AUTH', '이전 버전의 14일 표는 더 이상 쓰지 않음');
+  // 관리자가 직원 탭에서 빠지면 바로 막힘
   e.table('직원').push(['temp@example.com', '임시', '']);
   const T2 = raw('login', 'tok:temp@example.com');
-  ok(raw('boot', T2.session).ok, '다른 직원도 표 발급');
+  ok(raw('adminInfo', T2.session).ok, '다른 직원도 관리자 확인 가능');
   e.table('직원').pop();
-  eq(raw('boot', T2.session).code, 'FORBIDDEN', '직원 탭에서 빼면 표가 있어도 바로 막힘');
+  eq(raw('adminInfo', T2.session).code, 'FORBIDDEN', '직원 탭에서 빼면 바로 막힘');
+  eq(raw('login', 'tok:stranger@example.com').code, 'FORBIDDEN', '직원이 아닌 구글 계정은 관리자 불가');
   // 모든 기기 로그아웃
   e.ctx.resetSessions();
-  eq(raw('boot', L.session).code, 'AUTH', '모든 기기 로그아웃하면 이전 표가 모두 무효');
-  ok(raw('boot', raw('login', 'tok:owner@example.com').session).ok, '다시 로그인하면 정상');
-  // 로그인 유지 일수 설정
-  e.table('설정').find((r) => r[0] === '로그인유지일수')[1] = '30';
-  eq(raw('login', 'tok:owner@example.com').days, 30, '설정 탭의 로그인유지일수가 반영');
-  e.table('설정').find((r) => r[0] === '로그인유지일수')[1] = '9999';
-  eq(raw('login', 'tok:owner@example.com').days, 90, '최대 90일');
-  // 이전 버전 시트(설정 항목 없음)도 기본값 14일
-  e.table('설정').splice(e.table('설정').findIndex((r) => r[0] === '로그인유지일수'), 1);
-  eq(raw('login', 'tok:owner@example.com').days, 14, '설정 항목이 없으면 14일');
+  eq(raw('boot', U2.session).code, 'AUTH', '모든 기기 로그아웃하면 이전 표가 모두 무효');
+  ok(raw('unlock', null, { code: '1357' }).ok, '코드는 그대로 쓸 수 있음');
 })();
 
 console.log('api 테스트 통과: ' + passed + '개');

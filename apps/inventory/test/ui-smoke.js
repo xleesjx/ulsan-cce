@@ -16,6 +16,8 @@ env.ctx.setupSheets();
 const T = Core.todayStr();
 const call = (a, p) => { const r = env.call(a, p); assert.ok(r.ok, a + ' ' + JSON.stringify(r)); return r; };
 const SIGN = 'data:image/png;base64,' + 'iVBORw0KGgo'.repeat(40);
+const CODE = '2580';
+call('setAccessCode', { code: CODE }); // 관리자가 접속 코드를 정해 둔 상태
 
 /* 시험용 가짜 자료 */
 const item = (cat, name, qty, extra) => call('itemSave', { item: Object.assign({ cat, name, qty, loc: '혜윰실' }, extra || {}) }).items[0];
@@ -76,10 +78,7 @@ async function newPage(browser, vp, errors, opts) {
   const page = await ctxB.newPage();
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text()); });
-  if (!opts.loggedOut) {
-    const session = env.call('login', {}).session; // 구글 로그인을 한 번 마친 기기처럼, 센터 앱 로그인 표를 기기에 둠
-    await ctxB.addInitScript((tok) => { try { localStorage.setItem('ci-session', tok); } catch (e) { /* 무시 */ } }, session);
-  }
+  if (!opts.noActor) await ctxB.addInitScript(() => { try { if (!localStorage.getItem('ci-actor')) localStorage.setItem('ci-actor', '시험직원'); } catch (e) { /* 무시 */ } });
   await ctxB.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(c){window.__gsiCb=c.callback},renderButton(){},prompt(){},disableAutoSelect(){}}}};', contentType: 'text/javascript' }));
   await ctxB.route('https://api.test/**', async (route) => {
     const out = serve(JSON.parse(route.request().postData()));
@@ -87,6 +86,15 @@ async function newPage(browser, vp, errors, opts) {
   });
   return page;
 }
+
+/** 잠금 화면이 나오면 숫자판으로 코드를 눌러 풉니다 */
+async function unlock(page, code) {
+  await page.waitForSelector('#lk-dots, #view');
+  if (await page.locator('#lk-dots').count() === 0) return;
+  for (const k of (code || CODE)) await page.click('[data-act=lkkey][data-k="' + k + '"]');
+  await page.waitForSelector('#view .top, #view .appbar, #view .page', { timeout: 8000 });
+}
+async function go(page, url) { await page.goto(url); await unlock(page); }
 
 async function draw(page) {
   const b = await page.locator('#sigbox canvas').boundingBox();
@@ -103,7 +111,7 @@ async function draw(page) {
 
   /* ───── 휴대폰 ───── */
   const page = await newPage(browser, { width: 390, height: 844 }, errors);
-  await page.goto(base);
+  await go(page, base);
   await page.waitForSelector('.top h1', { timeout: 8000 });
   const shot = (n) => page.screenshot({ path: path.join(OUT, n + '.png'), fullPage: !process.env.VIEWPORT });
 
@@ -140,7 +148,7 @@ async function draw(page) {
   await page.click('[data-act=go][data-to="rental/' + rC.id + '/edit"]');
   await page.waitForSelector('#f-school');
   ok((await page.inputValue('#f-school')) === '하늘초등학교' && /수정/.test(await page.textContent('.appbar')), '공문 확인 목록의 [수정] → 예약 수정 화면');
-  await page.goto(base);
+  await go(page, base);
   await page.waitForSelector('.top h1');
   const outRow = page.locator('[data-act=go][data-to="rental/' + rA.id + '"]');
   ok(await outRow.count() >= 1, '이미 내준 건은 [수정] 대신 상세 화면으로');
@@ -177,7 +185,7 @@ async function draw(page) {
   await page.waitForFunction(() => document.querySelector('#toast.on'));
   ok(env.call('boot').items.find((i) => i.id === drone.id).pub === !before, '외부 공개 토글');
   // 정렬·보기 방식
-  await page.goto(base + '#/items');
+  await go(page, base + '#/items');
   await page.waitForSelector('#ilist .item');
   await page.fill('#iq', '');
   ok(/노트북/.test(await page.locator('#ilist .item').first().textContent()), '기본은 가나다순: 첫 물품 ' + (await page.locator('#ilist .item').first().textContent()).slice(0, 20));
@@ -196,12 +204,12 @@ async function draw(page) {
   const cols = await page.evaluate(() => getComputedStyle(document.querySelector('.gal')).gridTemplateColumns.split(' ').length);
   ok(cols === 2, '휴대폰 갤러리는 2열: ' + cols);
   await shot('02b-갤러리');
-  await page.reload();
+  await page.reload(); await unlock(page);
   await page.waitForSelector('#ilist .gcard');
   ok(true, '고른 보기 방식을 기억함(새로고침 뒤에도 갤러리)');
   await page.click('[data-act=iview][data-v=list]');
   // 물품 등록
-  await page.goto(base + '#/item/new');
+  await go(page, base + '#/item/new');
   await page.fill('[name=name]', '새 보드게임');
   await page.fill('[name=qty]', '5');
   await page.click('[data-act=saveitem]');
@@ -209,7 +217,7 @@ async function draw(page) {
   ok(env.call('boot').items.some((i) => i.name === '새 보드게임'), '물품 등록');
 
   // 3-2. 교구 대여: 탭 3개 (문의 확인 · 처리할 것 · 월간 계획), 둥근 버튼 없음
-  await page.goto(base + '#/rentals');
+  await go(page, base + '#/rentals');
   await page.waitForSelector('#av-q');
   ok((await page.textContent('.top .tabs')).replace(/\s+/g, '').indexOf('문의확인') >= 0 && /처리할 것/.test(await page.textContent('.top .tabs')) && /월간 계획/.test(await page.textContent('.top .tabs')), '교구 대여 위쪽 탭: 문의 확인 · 처리할 것 · 월간 계획');
   ok(await page.locator('.top .tabs button.on', { hasText: '문의 확인' }).count() === 1, '기본 탭은 문의 확인');
@@ -282,7 +290,7 @@ async function draw(page) {
 
   // 3-3. 센터 프로그램 교구 잡기
   const PS = Core.addDays(T, 20), PE = Core.addDays(T, 22);
-  await page.goto(base + '#/rentals');
+  await go(page, base + '#/rentals');
   await page.waitForSelector('#av-q');
   await page.click('[data-act=rview][data-v=cal]');
   await page.waitForSelector('.cal .cell');
@@ -311,7 +319,7 @@ async function draw(page) {
   const sh = env.call('rentalCreate', { school: '가나초등학교', teacher: '홍길동', phone: '', start: inWin, due: inWin, lines: [{ item: drone.id, qty: 30 }] });
   ok(!sh.ok && sh.code === 'SHORT', '프로그램 준비 기간에는 외부 대여 불가');
   // 수정 화면과 취소
-  await page.goto(base + '#/prog/' + progRows[0].id);
+  await go(page, base + '#/prog/' + progRows[0].id);
   await page.waitForSelector('#plines .qline');
   ok((await page.inputValue('#p-name')) === '시험 주말창의', '프로그램 수정 화면');
   await page.click('[data-act=pcancel]');
@@ -322,7 +330,7 @@ async function draw(page) {
   ok(env.call('rentalCreate', { school: '가나초등학교', teacher: '홍길동', phone: '', start: inWin, due: inWin, lines: [{ item: drone.id, qty: 5 }] }).ok, '취소하면 다시 대여 가능');
 
   // 4. 대여 등록 → 지금 대여 → 서명
-  await page.goto(base + '#/rental/new');
+  await go(page, base + '#/rental/new');
   await page.waitForSelector('#f-school');
   await page.fill('#f-school', 'ㄱㄴ');
   await page.waitForSelector('.sug button');
@@ -383,7 +391,7 @@ async function draw(page) {
   ok(rbNow.repairs.some((x) => x.item === hanoi.id && x.kind === '고장' && x.qty === 1), '고장이 수리 대기에');
 
   // 6. 교실 달력과 예약
-  await page.goto(base + '#/rooms');
+  await go(page, base + '#/rooms');
   await page.waitForSelector('.cal .cell');
   ok(/처리할 것/.test(await page.textContent('.top .tabs')) && /월간 계획/.test(await page.textContent('.top .tabs')) && await page.locator('.top .tabs button.on', { hasText: '월간 계획' }).count() === 1, '교실 대여 탭: 처리할 것 · 월간 계획(기본)');
   ok(await page.locator('.fab').count() === 0, '교실 대여도 둥근 버튼 없음');
@@ -394,7 +402,7 @@ async function draw(page) {
   await page.waitForSelector('.cal .cell');
   // (앞 단계에서 오세진 예약은 취소했으므로, 공문 확인 전 외부 대여를 하나 더 만듦)
   call('resSave', { kind: '외부 대여', rooms: ['SW교육체험교실'], date: Core.addDays(T, 3), start: '10:00', end: '12:00', purpose: '수업 나눔', person: '정하늘', org: '가나초', mobile: '01000000007' });
-  await page.reload();
+  await page.reload(); await unlock(page);
   await page.waitForSelector('.cal .cell');
   await page.click('[data-act=rmview][data-v=todo]');
   await page.waitForSelector('.sec');
@@ -438,7 +446,7 @@ async function draw(page) {
   await page.waitForSelector('.cal .cell');
   ok(env.call('boot').reservations.some((v) => v.purpose === '시험 연수' && v.start === '18:00'), '교실 예약 저장');
   // 종류 바꾸기: 센터 수업은 담당자·소속 칸이 없어진다
-  await page.goto(base + '#/res/new');
+  await go(page, base + '#/res/new');
   await page.waitForSelector('#rkinds');
   await page.click('[data-act=rkind][data-v=센터\\ 수업]');
   ok(await page.locator('#r-person').count() === 0 && await page.locator('#r-purpose').count() === 1, '센터 수업은 목적만');
@@ -446,35 +454,35 @@ async function draw(page) {
   ok(await page.locator('#r-person').count() === 1 && await page.locator('#r-org').count() === 0, '내부 대여는 담당자까지');
 
   // 7. 더보기: 수리 대기, 실적, 점검, 설정
-  await page.goto(base + '#/more/repairs');
+  await go(page, base + '#/more/repairs');
   await page.waitForSelector('[data-act=repdone]');
   await shot('09-수리대기');
   await page.click('[data-act=repdone][data-r=완료] >> nth=0');
   await page.waitForFunction(() => document.querySelector('#toast.on'));
-  await page.goto(base + '#/more/stats');
+  await go(page, base + '#/more/stats');
   await page.waitForSelector('table.tb');
   ok(/텔로에듀 드론/.test(await page.textContent('#view')), '실적 표');
   await shot('10-실적');
-  await page.goto(base + '#/more/inspect');
+  await go(page, base + '#/more/inspect');
   await page.waitForSelector('[data-act=istart]');
   call('inspectStart', { name: '시험 점검' });
-  await page.goto(base + '#/more/inspect/' + encodeURIComponent('시험 점검'));
+  await go(page, base + '#/more/inspect/' + encodeURIComponent('시험 점검'));
   await page.waitForSelector('[data-act=imark]');
   await page.click('[data-act=imark][data-v=정상] >> nth=0');
   await page.waitForSelector('.btn.green');
   await shot('11-점검');
-  await page.goto(base + '#/more/settings');
+  await go(page, base + '#/more/settings');
   await page.waitForSelector('.card');
   ok(/직원/.test(await page.textContent('#view')), '설정 화면');
-  await page.goto(base + '#/more');
+  await go(page, base + '#/more');
   await shot('12-더보기');
 
   /* ───── 넓은 화면(탭·PC) ───── */
   const wide = await newPage(browser, { width: 1280, height: 800 }, errors);
-  await wide.goto(base);
+  await go(wide, base);
   await wide.waitForSelector('.top h1');
   await wide.screenshot({ path: path.join(OUT, 'w01-브리핑.png') });
-  await wide.goto(base + '#/rentals');
+  await go(wide, base + '#/rentals');
   await wide.waitForSelector('#av-q');
   ok(await wide.locator('.split .left').count() === 1, '넓은 화면은 두 칸');
   await wide.waitForSelector('#av-res .crow');
@@ -496,15 +504,15 @@ async function draw(page) {
   await wide.waitForSelector('#sigbox');
   ok(await wide.locator('.split .left .card').count() >= 1, '내주기 화면에서도 왼쪽 목록 유지');
   await wide.screenshot({ path: path.join(OUT, 'w03-내주기.png') });
-  await wide.goto(base + '#/rentals');
+  await go(wide, base + '#/rentals');
   await wide.click('[data-act=rview][data-v=todo]');
   await wide.locator('.split .left [data-act=go][data-to$="/return"]').first().click();
   await wide.waitForSelector('[id^=rl-]');
   await wide.screenshot({ path: path.join(OUT, 'w04-반납받기.png') });
-  await wide.goto(base + '#/rooms');
+  await go(wide, base + '#/rooms');
   await wide.waitForSelector('.cal .cell');
   await wide.screenshot({ path: path.join(OUT, 'w05-교실달력.png') });
-  await wide.goto(base + '#/items');
+  await go(wide, base + '#/items');
   await wide.waitForSelector('#ilist .item');
   await wide.screenshot({ path: path.join(OUT, 'w06-물품.png') });
   await wide.click('[data-act=iview][data-v=gal]');
@@ -513,41 +521,77 @@ async function draw(page) {
   ok(wcols >= 5, '넓은 화면 갤러리는 5열 이상: ' + wcols);
   await wide.screenshot({ path: path.join(OUT, 'w07-갤러리.png') });
 
-  /* ───── 더보기: 시트·Apps Script 바로가기, 서버 버전 ───── */
-  await page.goto(base + '#/more');
+  /* ───── 관리자 메뉴: 구글 로그인으로 한 번 더 확인 ───── */
+  const jwt = 'x.' + Buffer.from(JSON.stringify({ email: 'owner@example.com', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url') + '.y';
+  await go(page, base + '#/more/stats');
+  await page.waitForSelector('table.tb');
+  ok(await page.locator('[data-act=stcsv]').count() === 0 && /관리자 확인/.test(await page.textContent('#view')), '코드 접속에서는 엑셀 내려받기 대신 관리자 확인 안내');
+  await go(page, base + '#/more/settings');
+  ok(!/@example\.com/.test(await page.textContent('#view')), '코드 접속 설정 화면에는 직원 이메일이 없음');
+  await go(page, base + '#/more');
   await page.waitForSelector('[data-act=logout]');
-  ok(await page.locator('a[href*="script.google.com/home/projects/SCRIPT123/edit"]').count() === 1, '더보기에 Apps Script 열기 버튼');
-  ok(await page.locator('a[href*="docs.google.com/spreadsheets"]').count() === 1, '더보기에 구글 시트 열기 버튼');
+  ok(await page.locator('a[href*="script.google.com"]').count() === 0, '코드 접속 더보기에는 Apps Script 주소가 없음');
+  await page.click('[data-to="more/admin"]');
+  await page.waitForSelector('#gbtn-admin');
+  await shot('13a-관리자확인');
+  await page.waitForFunction(() => typeof window.__gsiCb === 'function');
+  await page.evaluate((c) => window.__gsiCb({ credential: c }), jwt);
+  await page.waitForSelector('#ad-c1');
+  ok(await page.locator('a[href*="script.google.com/home/projects/SCRIPT123/edit"]').count() === 1, '관리자 메뉴에 Apps Script 열기 버튼');
+  ok(await page.locator('a[href*="docs.google.com/spreadsheets"]').count() === 1, '관리자 메뉴에 구글 시트 열기 버튼');
   ok(await page.locator('a[href*="raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/Code.gs"]').count() === 1 && await page.locator('a[href$="Core.gs"]').count() === 1, '새 Code.gs·Core.gs 열기 버튼');
   ok(/서버 코드가 최신/.test(await page.textContent('#view')) && !(await page.evaluate(() => window.App.outdated())), '서버 코드가 최신이면 안내만');
-  await shot('13-더보기관리');
+  ok(/owner@example\.com/.test(await page.textContent('#view')) && await page.locator('[data-act=stcsv]').count() === 3, '관리자 메뉴에 직원 이메일과 엑셀 내려받기');
+  await shot('13-관리자메뉴');
+  // 쉬운 코드는 거절, 새 코드로 바꾸기
+  await page.fill('#ad-c1', '1234'); await page.fill('#ad-c2', '1234');
+  await page.click('[data-act=adcode]');
+  await page.waitForFunction(() => /쉬운 코드/.test(document.getElementById('toast').textContent));
+  ok(true, '쉬운 코드는 거절 안내');
+  await page.fill('#ad-c1', '3691'); await page.fill('#ad-c2', '3691');
+  await page.click('[data-act=adcode]');
+  await page.waitForFunction(() => /접속 코드를 정했습니다/.test(document.getElementById('toast').textContent));
+  ok(true, '관리자 메뉴에서 접속 코드 변경');
 
-  /* ───── 로그인 유지 ───── */
-  const stored = await page.evaluate(() => localStorage.getItem('ci-session'));
-  ok(/^s1\./.test(stored), '센터 앱 로그인 표가 기기에 보관됨');
-  const again = await page.context().newPage(); // 탭을 닫았다 새로 연 것과 같음(탭 임시 저장소는 비어 있음)
-  again.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  /* ───── 잠금 화면 ───── */
+  ok(await page.evaluate(() => localStorage.getItem('ci-session')) === null, '로그인 표를 기기에 저장하지 않음');
+  const again = await newPage(browser, { width: 390, height: 844 }, errors);
   await again.goto(base);
+  await again.waitForSelector('#lk-dots');
+  ok(await again.locator('.keypad button').count() === 11, '앱을 열면 숫자판 잠금 화면');
+  await again.screenshot({ path: path.join(OUT, '00-잠금화면.png') });
+  for (const k of CODE) await again.click('[data-act=lkkey][data-k="' + k + '"]');
+  await again.waitForFunction(() => /맞지 않습니다/.test(document.getElementById('lk-msg').textContent));
+  ok(await again.locator('#lk-dots i.on').count() === 0, '바뀌기 전 코드는 틀림 → 다시 입력');
+  await again.screenshot({ path: path.join(OUT, '00b-잠금틀림.png') });
+  await again.keyboard.type('3691'); // 키보드로도 입력
   await again.waitForSelector('.top h1', { timeout: 8000 });
-  ok(/브리핑/.test(await again.textContent('.top h1')), '탭을 새로 열어도 다시 로그인하지 않음');
+  ok(/브리핑/.test(await again.textContent('.top h1')), '새 코드로 잠금 해제 → 브리핑');
+  await go(again, base + '#/more');
+  await again.click('[data-act=logout]');
+  await again.waitForSelector('#lk-dots');
+  ok(true, '지금 잠그기');
+  // 잠근 뒤 풀면 보던 화면으로
+  await again.keyboard.type('3691');
+  await again.waitForSelector('[data-act=logout]', { timeout: 8000 });
+  ok(true, '풀면 보던 화면(더보기)으로 돌아감');
+  // 자리를 비우면 잠김 (15분 동안 아무것도 누르지 않음 → 시계를 앞당겨 확인)
+  await again.evaluate(() => { const n = Date.now; Date.now = () => n() + 16 * 60000; });
+  await again.waitForSelector('#lk-dots', { timeout: 40000 });
+  ok(/잠겼습니다/.test(await again.textContent('#lk-msg')), '한동안 안 쓰면 다시 잠김');
   await again.close();
-  // 서버가 옛 버전이면 알림
-  await page.evaluate(() => { window.App.S.codeVersion = 0; });
-  ok(await page.evaluate(() => window.App.outdated()), '서버 코드 번호가 낮으면 업데이트 필요로 판단');
-  // 처음 로그인(구글 로그인 → 로그인 표 받기 → 보관)
-  const fresh = await newPage(browser, { width: 390, height: 844 }, errors, { loggedOut: true });
-  await fresh.goto(base);
-  await fresh.waitForSelector('.login #gbtn');
-  const jwt = 'x.' + Buffer.from(JSON.stringify({ email: 'owner@example.com', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url') + '.y';
-  await fresh.waitForFunction(() => typeof window.__gsiCb === 'function');
-  await fresh.evaluate((c) => window.__gsiCb({ credential: c }), jwt);
-  await fresh.waitForSelector('.top h1', { timeout: 8000 });
-  ok(/^s1\./.test(await fresh.evaluate(() => localStorage.getItem('ci-session'))), '구글 로그인 뒤 서버에서 받은 로그인 표를 보관');
-  // 로그아웃하면 표를 지움
-  await fresh.goto(base + '#/more');
-  await fresh.click('[data-act=logout]');
-  await fresh.waitForSelector('.login #gbtn');
-  ok(await fresh.evaluate(() => localStorage.getItem('ci-session')) === null, '로그아웃하면 기기의 로그인 표 삭제');
+  // 처리 직원이 비어 있으면 저장 전에 알려 줌
+  const noActor = await newPage(browser, { width: 390, height: 844 }, errors, { noActor: true });
+  await noActor.goto(base + '#/res/new');
+  await unlock(noActor, '3691');
+  await noActor.waitForSelector('#f-actor');
+  ok(await noActor.inputValue('#f-actor') === '' && await noActor.locator('[data-act=actorpick]').count() >= 1, '처리 직원 칸: 비어 있고 직원 이름 버튼이 나옴');
+  await noActor.fill('#r-start', '1000'); await noActor.fill('#r-end', '1100');
+  await noActor.click('[data-act=ressave]');
+  await noActor.waitForFunction(() => /처리 직원/.test(document.getElementById('toast').textContent));
+  ok(true, '처리 직원이 없으면 저장 전에 안내');
+  await noActor.click('[data-act=actorpick] >> nth=0');
+  ok(await noActor.inputValue('#f-actor') !== '' && await noActor.evaluate(() => localStorage.getItem('ci-actor')) !== '', '이름 버튼을 누르면 칸이 채워지고 기기에 기억');
 
   ok(errors.length === 0, '브라우저 오류 없음: ' + errors.join(' | '));
   await browser.close();

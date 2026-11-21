@@ -1,12 +1,12 @@
 /*
  * 창의센터 물품·시설 관리 — 앱 뼈대
- * 로그인, 서버 연결, 화면 이동(주소의 # 뒤), 자동 새로고침을 맡습니다.
+ * 잠금 화면(4자리 접속 코드), 관리자 확인(구글 로그인), 서버 연결, 화면 이동(주소의 # 뒤), 자동 새로고침을 맡습니다.
  * 각 화면은 view-*.js 에서 App.views.이름 = function(...) 으로 등록합니다.
  */
 (function () {
   'use strict';
   var CFG = window.APP_CONFIG || {};
-  var S = { codeVersion: 0, coreVersion: 0, scriptUrl: '', token: null, user: null, data: null, settings: {}, staff: [], schools: [], rev: '0', sheetUrl: '', ui: {}, v: 0, syncedAt: 0 };
+  var S = { codeVersion: 0, coreVersion: 0, scriptUrl: '', token: null, admin: null, actor: '', user: null, data: null, settings: {}, staff: [], staffNames: [], schools: [], rev: '0', sheetUrl: '', ui: {}, v: 0, syncedAt: 0 };
   var App = window.App = { S: S, views: {}, acts: {}, ins: {}, chs: {}, cleanup: null };
   var root = document.getElementById('app');
 
@@ -76,11 +76,11 @@
 
   /* ───────── 서버 코드가 오래됐는지 ───────── */
 
-  App.REQUIRED_CODE = 5;
+  App.REQUIRED_CODE = 6;
   /** 서버(Apps Script)의 코드가 이 화면보다 오래되면 true */
   App.outdated = function () { return !!S.data && (S.codeVersion < App.REQUIRED_CODE || S.coreVersion < Core.VERSION); };
   App.versionNotice = function () {
-    return App.outdated() ? '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>서버 코드를 새 버전으로 바꿔 주세요.</b> 화면과 서버의 버전이 달라서 일부 계산이 어긋날 수 있어요. <button class="textbtn" style="padding:0;min-height:0;color:var(--red);text-decoration:underline" data-act="go" data-to="more">더보기에서 방법 보기</button></div>' : '';
+    return App.outdated() ? '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>서버 코드를 새 버전으로 바꿔 주세요.</b> 화면과 서버의 버전이 달라서 일부 계산이 어긋날 수 있어요. <button class="textbtn" style="padding:0;min-height:0;color:var(--red);text-decoration:underline" data-act="go" data-to="more/admin">관리자 메뉴에서 방법 보기</button></div>' : '';
   };
   /** 이 앱이 올라가 있는 GitHub 저장소 (주소에서 알아냄: 소유자가 바뀌어도 그대로 동작) */
   App.repo = function () {
@@ -97,33 +97,49 @@
     } catch (e) { return null; }
   }
   /**
-   * 로그인 표는 두 가지입니다.
-   *  - 센터 앱 로그인 표('s1.'로 시작, 기본 14일): 구글 로그인 한 번 뒤에 서버가 발급. 기기에 오래 보관합니다.
-   *  - 구글 로그인 정보(1시간): 로그인할 때만 잠깐 씁니다. 탭을 닫으면 버립니다.
+   * 로그인 표는 기기에 저장하지 않고 화면이 열려 있는 동안만 기억합니다.
+   *  - 접속 코드로 받은 표(12시간): 앱을 새로 열면 다시 코드를 넣어야 합니다.
+   *  - 관리자 표(30분): 구글 로그인 뒤 서버가 발급. 관리자 메뉴에서만 씁니다.
    */
-  function isSession(tok) { return typeof tok === 'string' && tok.indexOf('s1.') === 0; }
   function tokenValid(tok) {
     var p = tok && jwtPayload(tok);
     if (!p) return false;
-    return isSession(tok) ? p.x > Date.now() : p.exp * 1000 > Date.now() + 60000;
+    return (p.x || p.exp * 1000) > Date.now() + 5000;
   }
-  var SKEY = 'ci-session';
-  function saveSession(tok) { S.token = tok; try { localStorage.setItem(SKEY, tok); } catch (e) { /* 무시 */ } }
-  function clearTokens() { try { localStorage.removeItem(SKEY); sessionStorage.removeItem('idtoken'); } catch (e) { /* 무시 */ } }
+  App.adminValid = function () { return !!S.admin && S.admin.until > Date.now() + 5000; };
 
-  App.api = function (action, payload) {
-    if (!tokenValid(S.token)) { relogin('로그인 시간이 지났습니다. 다시 로그인해 주세요.'); return Promise.reject(new Error('로그인 필요')); }
-    var body = Object.assign({ action: action, token: S.token }, payload || {});
+  /** 이 기기에서 [처리 직원] 칸에 마지막으로 적은 이름 */
+  var AKEY = 'ci-actor';
+  try { S.actor = localStorage.getItem(AKEY) || ''; } catch (e) { S.actor = ''; }
+  App.setActor = function (name) {
+    S.actor = String(name || '').trim().slice(0, 20);
+    try { localStorage.setItem(AKEY, S.actor); } catch (e) { /* 무시 */ }
+  };
+
+  function post(body) {
     return fetch(CFG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
-      .then(function (r) { return r.json(); })
+      .then(function (r) { return r.json(); }, function () { throw new Error('서버에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'); })
       .then(function (res) {
-        if (!res.ok) {
-          if (res.code === 'AUTH' || res.code === 'FORBIDDEN') relogin(res.error);
-          var e = new Error(res.error || '오류'); e.code = res.code; e.extra = res.extra; throw e;
-        }
-        if (res.session) saveSession(res.session); // 서버가 새 로그인 표를 주면 바꿔 둠 (쓰는 동안 계속 로그인 유지)
+        if (!res.ok) { var e = new Error(res.error || '오류'); e.code = res.code; e.extra = res.extra; throw e; }
         return res;
-      }, function () { throw new Error('서버에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'); });
+      });
+  }
+
+  /** 일반 요청 (접속 코드 표). 표가 끝났으면 잠금 화면으로 */
+  App.api = function (action, payload) {
+    if (!tokenValid(S.token)) { App.lock('다시 잠금을 풀어 주세요.'); return Promise.reject(new Error('잠금 해제 필요')); }
+    return post(Object.assign({ action: action, token: S.token, actor: S.actor }, payload || {})).catch(function (e) {
+      if (e.code === 'AUTH' || e.code === 'FORBIDDEN') App.lock(e.message);
+      throw e;
+    });
+  };
+  /** 관리자 요청 (구글 로그인으로 받은 30분짜리 표) */
+  App.adminApi = function (action, payload) {
+    if (!App.adminValid()) { S.admin = null; var e0 = new Error('관리자 확인 시간이 지났습니다. 다시 구글 로그인을 해 주세요.'); e0.code = 'ADMIN'; return Promise.reject(e0); }
+    return post(Object.assign({ action: action, token: S.admin.token, actor: S.actor }, payload || {})).catch(function (e) {
+      if (e.code === 'AUTH' || e.code === 'FORBIDDEN' || e.code === 'ADMIN') { S.admin = null; e.code = 'ADMIN'; }
+      throw e;
+    });
   };
 
   /** 서버가 돌려준 바뀐 내용을 화면의 데이터에 반영합니다 */
@@ -158,24 +174,89 @@
   App.rmap = function () { fresh(); return cache.rmap; };
   App.linesOf = function (rid) { fresh(); return cache.linesBy[rid] || []; };
 
-  /* ───────── 로그인 ───────── */
+  /* ───────── 잠금 화면 (4자리 접속 코드) ───────── */
 
-  function relogin(msg) {
-    S.token = null;
-    clearTokens();
-    showLogin(msg);
+  var AWAY_MS = 5 * 60000, IDLE_MS = 15 * 60000;
+  var lk = { code: '', busy: false, info: null };
+
+  /** 잠그기: 표와 데이터를 지우고 잠금 화면으로 (지금 보던 화면 주소는 그대로 → 풀면 그 화면으로) */
+  App.lock = function (msg) {
+    S.token = null; S.admin = null; S.data = null; S.v++;
+    if (App.cleanup) { try { App.cleanup(); } catch (e) { /* 무시 */ } App.cleanup = null; }
+    showLock(msg);
+  };
+  App.logout = App.lock;
+
+  function dots() { var h = ''; for (var i = 0; i < 4; i++) h += '<i class="' + (i < lk.code.length ? 'on' : '') + '"></i>'; return h; }
+  function showLock(msg) {
+    lk.code = ''; lk.busy = false;
+    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'del'];
+    root.innerHTML = '<div class="lock" role="dialog" aria-label="잠금 화면"><div class="brand">창의센터 물품·시설 관리</div>' +
+      '<p class="muted" id="lk-msg" aria-live="polite">' + esc(msg || '접속 코드 4자리를 입력해 주세요') + '</p>' +
+      '<div class="lkdots" id="lk-dots" aria-label="입력한 자리 수">' + dots() + '</div>' +
+      '<div class="keypad">' + keys.map(function (k) {
+        if (!k) return '<span></span>';
+        return '<button data-act="lkkey" data-k="' + k + '" aria-label="' + (k === 'del' ? '지우기' : k) + '">' + (k === 'del' ? '⌫' : k) + '</button>';
+      }).join('') + '</div>' +
+      '<button class="textbtn" data-act="lkadmin" style="margin-top:8px">관리자 로그인 (구글)</button><div id="gbtn" hidden></div></div>';
+    if (msg && msg !== '접속 코드 4자리를 입력해 주세요') document.getElementById('lk-msg').style.color = 'var(--red)';
+    // 코드를 누르는 동안 서버를 미리 깨워 둡니다 (Apps Script 첫 응답이 느린 것을 줄임)
+    post({ action: 'lockInfo' }).then(function (r) {
+      lk.info = r;
+      if (!r.hasCode) { lockMsg('아직 접속 코드가 없습니다. 관리자가 아래 구글 로그인으로 들어가 코드를 정해 주세요.', true); openGoogle(); }
+    }, function (e) {
+      if (e.code === 'BAD_ACTION') { lockMsg('서버 코드가 옛 버전입니다. 관리자가 구글 로그인으로 들어가 서버 코드를 업데이트해 주세요.', true); openGoogle(); }
+    });
+    if (!S.schools.length) loadSchools();
   }
+  function lockMsg(t, err) { var m = document.getElementById('lk-msg'); if (m) { m.textContent = t; m.style.color = err ? 'var(--red)' : ''; } }
+  function lockShown() { return !!document.getElementById('lk-dots'); }
 
-  function showLogin(msg) {
-    root.innerHTML = '<div class="login"><div class="brand">창의센터 물품·시설 관리</div>' +
-      '<p class="muted">등록된 직원의 구글 계정으로 로그인해 주세요.</p>' +
-      (msg ? '<p style="color:var(--red)">' + esc(msg) + '</p>' : '') + '<div id="gbtn"></div></div>';
-    whenGsi(function () {
-      google.accounts.id.renderButton(document.getElementById('gbtn'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ko' });
-      google.accounts.id.prompt();
+  function pressKey(k) {
+    if (lk.busy || !lockShown()) return;
+    if (k === 'del') lk.code = lk.code.slice(0, -1); else if (/^\d$/.test(k) && lk.code.length < 4) lk.code += k;
+    document.getElementById('lk-dots').innerHTML = dots();
+    if (lk.code.length === 4) unlock();
+  }
+  App.acts.lkkey = function (el) { pressKey(el.getAttribute('data-k')); };
+  document.addEventListener('keydown', function (e) {
+    if (!lockShown() || e.target.tagName === 'INPUT') return;
+    if (/^\d$/.test(e.key)) { pressKey(e.key); e.preventDefault(); } else if (e.key === 'Backspace') { pressKey('del'); e.preventDefault(); }
+  });
+
+  function unlock() {
+    lk.busy = true;
+    lockMsg('확인 중…');
+    post({ action: 'unlock', code: lk.code, actor: S.actor }).then(function (res) {
+      S.token = res.session;
+      lastActive = Date.now();
+      setBoot(res);
+      buildShell();
+      render();
+    }, function (e) {
+      lk.busy = false; lk.code = '';
+      var d = document.getElementById('lk-dots');
+      if (d) { d.innerHTML = dots(); d.classList.remove('shake'); void d.offsetWidth; d.classList.add('shake'); }
+      if (e.code === 'WRONG_CODE') lockMsg('코드가 맞지 않습니다.' + (e.extra && e.extra.left <= 5 ? ' (' + e.extra.left + '번 더 틀리면 10분 동안 잠김)' : ''), true);
+      else if (e.code === 'BAD_ACTION') lockMsg('서버 코드가 옛 버전입니다. 관리자가 구글 로그인으로 들어가 서버 코드를 업데이트해 주세요.', true);
+      else lockMsg(e.message, true);
     });
   }
 
+  /* 자리를 비우면 다시 잠금: 다른 앱으로 5분 이상 나가 있었거나, 15분 동안 아무것도 누르지 않았을 때 */
+  var lastActive = Date.now(), hiddenAt = 0;
+  ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, function () { lastActive = Date.now(); }, { capture: true, passive: true }); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (S.token && hiddenAt && Date.now() - hiddenAt > AWAY_MS) { hiddenAt = 0; App.lock('자리를 비운 사이 잠겼습니다. 코드를 다시 입력해 주세요.'); return; }
+    hiddenAt = 0;
+    maybeSync();
+  });
+  setInterval(function () { if (S.token && Date.now() - lastActive > IDLE_MS) App.lock('한동안 쓰지 않아 잠겼습니다. 코드를 다시 입력해 주세요.'); }, 30000);
+
+  /* ───────── 관리자 확인 (구글 로그인) ───────── */
+
+  var gsiCb = null;
   function whenGsi(cb) {
     if (window.google && google.accounts && google.accounts.id) { initGsi(); cb(); return; }
     setTimeout(function () { whenGsi(cb); }, 150);
@@ -184,42 +265,46 @@
   function initGsi() {
     if (gsiInit) return;
     gsiInit = true;
-    google.accounts.id.initialize({ client_id: CFG.CLIENT_ID, callback: onCredential, auto_select: true, cancel_on_tap_outside: false });
+    google.accounts.id.initialize({ client_id: CFG.CLIENT_ID, callback: function (resp) { if (gsiCb) gsiCb(resp.credential); }, auto_select: false, cancel_on_tap_outside: false });
   }
-  function onCredential(resp) {
-    S.token = resp.credential;
-    // 구글 로그인 확인이 끝나면 서버에서 센터 앱 로그인 표를 받아 둡니다
-    App.api('login').then(function () { begin(); }, function (e) {
-      if (e.code === 'BAD_ACTION') { // 서버 코드가 아직 옛 버전이면 예전 방식으로 계속
-        try { sessionStorage.setItem('idtoken', S.token); } catch (x) { /* 무시 */ }
-        begin();
-      } else if (e.code !== 'AUTH' && e.code !== 'FORBIDDEN') showLogin(e.message);
+  /** 구글 로그인 버튼을 그 자리(id)에 그리고, 로그인하면 30분짜리 관리자 표를 받아 done()을 부릅니다 */
+  App.googleButton = function (id, done, fail) {
+    gsiCb = function (credential) {
+      post({ action: 'login', token: credential }).then(function (res) {
+        S.admin = { token: res.session, until: Date.now() + (res.minutes || 30) * 60000, name: res.name || '', email: res.email || '' };
+        if (!res.minutes) S.admin.until = Date.now() + 30 * 60000; // 옛 서버 코드
+        done();
+      }, function (e) { if (fail) fail(e); else App.toast(e.message, true); });
+    };
+    whenGsi(function () {
+      var box = document.getElementById(id);
+      if (!box) return;
+      box.hidden = false;
+      google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ko' });
     });
-  }
-
-  App.logout = function () {
-    S.token = null; S.data = null;
-    clearTokens();
-    if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
-    showLogin();
   };
+  function openGoogle() {
+    // 잠금 화면에서 관리자로 들어가기: 관리자 표로 바로 앱을 엽니다 (30분 뒤 잠김)
+    App.googleButton('gbtn', function () { S.token = S.admin.token; begin(); }, function (e) { lockMsg(e.message, true); });
+  }
+  App.acts.lkadmin = function () { openGoogle(); };
 
   App.start = function () {
     if (!CFG.API_URL || /여기에/.test(CFG.API_URL + CFG.CLIENT_ID)) {
       root.innerHTML = '<div class="login"><div class="brand">설정이 필요합니다</div><p class="muted">config.js 에 Apps Script 주소와 클라이언트 ID를 넣어 주세요.</p></div>';
       return;
     }
-    var saved = null;
-    try { saved = localStorage.getItem(SKEY); } catch (e) { /* 무시 */ }
-    if (!tokenValid(saved)) { try { saved = sessionStorage.getItem('idtoken'); } catch (e) { saved = null; } }
-    if (tokenValid(saved)) { S.token = saved; begin(); } else showLogin();
+    // 이전 버전이 기기에 남긴 로그인 표는 지웁니다 (이제는 기기에 저장하지 않음)
+    try { localStorage.removeItem('ci-session'); sessionStorage.removeItem('idtoken'); } catch (e) { /* 무시 */ }
+    showLock();
   };
 
   /* ───────── 처음 불러오기 ───────── */
 
   function setBoot(b) {
     S.codeVersion = b.codeVersion || 0; S.coreVersion = b.coreVersion || 0; S.scriptUrl = b.scriptUrl || '';
-    S.user = b.user; S.settings = b.settings; S.staff = b.staff; S.rev = b.rev; S.sheetUrl = b.sheetUrl;
+    S.user = b.user; S.settings = b.settings; S.staff = b.staff || []; S.rev = b.rev; S.sheetUrl = b.sheetUrl || '';
+    S.staffNames = b.staffNames || (b.staff || []).map(function (x) { return x.name; }).filter(Boolean);
     S.data = { items: b.items, rentals: b.rentals, lines: b.lines, repairs: b.repairs, rooms: b.rooms, reservations: b.reservations, programs: b.programs || [] };
     S.v++; S.syncedAt = Date.now();
   }
@@ -237,7 +322,7 @@
       buildShell();
       render();
     }).catch(function (e) {
-      if (e.code === 'AUTH' || e.code === 'FORBIDDEN') return;
+      if (e.code === 'AUTH' || e.code === 'FORBIDDEN' || !S.token) return;
       root.innerHTML = '<div class="login"><div class="brand">불러오지 못했습니다</div><p class="muted">' + esc(e.message) + '</p><button class="btn primary" onclick="location.reload()">다시 시도</button></div>';
     });
   }
@@ -259,7 +344,6 @@
       if (r.rev !== S.rev) return App.reload(true);
     }).catch(function () { /* 다음에 다시 */ });
   }
-  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') maybeSync(); });
   setInterval(function () { if (document.visibilityState === 'visible') maybeSync(); }, 45000);
 
   /* ───────── 화면 틀과 이동 ───────── */
@@ -327,6 +411,7 @@
       if (p[1] === 'stats') return ['stats'];
       if (p[1] === 'inspect') return ['inspect', p[2] || null];
       if (p[1] === 'settings') return ['settings'];
+      if (p[1] === 'admin') return ['admin'];
       return ['more'];
     }
     return ['brief'];

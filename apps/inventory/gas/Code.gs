@@ -2,13 +2,18 @@
  * 창의센터 물품·시설 관리 — Apps Script (저장·검사 서버)
  * 구글 시트에 붙어 있는 스크립트입니다. 웹앱으로 배포하면 GitHub Pages 화면이 이 주소로 요청을 보냅니다.
  * 스크립트 속성: CLIENT_ID (구글 로그인 클라이언트 ID)
+ * 접속 방법 두 가지:
+ *  - 일반 업무: 4자리 접속 코드 (앱을 열 때마다 입력, 12시간짜리 표)
+ *  - 관리(설정·직원·접속 코드·내려받기): 등록된 직원의 구글 로그인 (30분짜리 표)
  * 규칙 계산은 Core.gs 와 공유합니다 (docs/core.js 를 그대로 복사한 파일).
  */
 
 var TZ = 'Asia/Seoul';
 /** 화면이 요구하는 서버 코드 번호보다 낮으면 앱이 '서버 코드를 업데이트하세요'라고 알려 줍니다 */
-var CODE_VERSION = 5;
+var CODE_VERSION = 6;
 var SESSION_PREFIX = 's1.';
+/** 화면이 부르는 서버 기능 모음 */
+var API = {};
 var SHEET = {
   ITEMS: '물품', RENTALS: '대여', LINES: '대여품목', REPAIRS: '수리', ROOMS: '교실', RES: '교실예약',
   INSPECT: '점검', STAFF: '직원', SETTINGS: '설정', LOG: '변경기록', PROG: '센터사용'
@@ -46,17 +51,22 @@ function doGet() {
   return ContentService.createTextOutput('창의센터 물품·시설 관리 서버가 동작 중입니다.');
 }
 
+/** 로그인 없이 부를 수 있는 요청 (잠금 화면용) */
+var OPEN = { lockInfo: 1, unlock: 1 };
+/** 구글 로그인(관리자 확인)이 있어야 하는 요청 */
+var ADMIN_ONLY = { adminInfo: 1, setAccessCode: 1 };
+
 function doPost(e) {
   var out;
   MEMO = {}; META = {};
   try {
     var req = JSON.parse(e.postData.contents);
-    var user = authenticate_(req.token);
     var fn = API[req.action];
     if (!fn) throw apiError_('BAD_ACTION', '알 수 없는 요청입니다.');
+    var user = OPEN[req.action] ? null : authenticate_(req.token, req);
+    if (ADMIN_ONLY[req.action] && !user.admin) throw apiError_('ADMIN', '관리자 확인(구글 로그인)이 필요합니다.');
     out = fn(req, user);
     out.ok = true;
-    if (user.session && !out.session && user.session.x - Date.now() < user.session.d * 86400000 / 2) out.session = makeSession_(user.email, user.session.d);
   } catch (err) {
     out = { ok: false, code: err.code || 'ERROR', error: err.code ? err.message : '서버 오류: ' + err.message };
     if (err.extra) out.extra = err.extra;
@@ -69,7 +79,11 @@ function bad_(msg, extra) { return apiError_('INVALID', msg, extra); }
 
 /* ───────── 로그인 확인 ───────── */
 
-/* ───────── 센터 앱 로그인 표 (구글 로그인 뒤 발급, 기본 14일) ───────── */
+/* ───────── 센터 앱 로그인 표 ─────────
+ * r:'c' 접속 코드로 받은 표 (12시간, 화면은 기기에 저장하지 않음 → 앱을 열 때마다 코드 입력)
+ * r:'a' 구글 로그인으로 받은 관리자 표 (30분)
+ */
+var CODE_HOURS = 12, ADMIN_MINUTES = 30, CODE_TRIES = 10, CODE_LOCK_SEC = 600;
 
 function secret_() {
   var p = PropertiesService.getScriptProperties(), v = p.getProperty('SESSION_SECRET');
@@ -83,8 +97,8 @@ function sameText_(a, b) {
   for (var i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return d === 0;
 }
-function makeSession_(email, days) {
-  var payload = Utilities.base64EncodeWebSafe(JSON.stringify({ e: email, x: Date.now() + days * 86400000, d: days }));
+function makeSession_(obj) {
+  var payload = Utilities.base64EncodeWebSafe(JSON.stringify(obj));
   return SESSION_PREFIX + payload + '.' + sign_(payload);
 }
 function readSession_(token) {
@@ -92,24 +106,79 @@ function readSession_(token) {
   if (parts.length !== 2 || !sameText_(sign_(parts[0]), parts[1])) return null;
   var p;
   try { p = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(parts[0])).getDataAsString()); } catch (e) { return null; }
-  return p && p.e && p.x > Date.now() ? p : null;
+  return p && (p.r === 'a' || p.r === 'c') && p.x > Date.now() ? p : null;
 }
 
-function authenticate_(token) {
-  if (!token) throw apiError_('AUTH', '로그인이 필요합니다.');
-  var email, sess = null;
+/** 화면의 [처리 직원] 칸에 적은 이름 (없으면 기본값) */
+function actor_(req, fallback) { return s_(req && req.actor, 20) || fallback; }
+
+function authenticate_(token, req) {
+  if (!token) throw apiError_('AUTH', '접속 코드를 입력해 주세요.');
+  var email;
   if (token.indexOf(SESSION_PREFIX) === 0) {
-    sess = readSession_(token);
-    if (!sess) throw apiError_('AUTH', '로그인 기간이 지났습니다. 다시 로그인해 주세요.');
+    var sess = readSession_(token);
+    if (!sess) throw apiError_('AUTH', '다시 잠금을 풀어 주세요.');
+    if (sess.r === 'c') {
+      if (String(sess.g) !== codeGen_()) throw apiError_('AUTH', '접속 코드가 바뀌었습니다. 새 코드를 입력해 주세요.');
+      return { email: '', name: actor_(req, '공용 기기'), role: '', admin: false };
+    }
     email = String(sess.e).toLowerCase();
   } else {
     email = googleEmail_(token);
   }
+  var staff = staffOf_(email);
+  if (!staff) throw apiError_('FORBIDDEN', email + ' 계정은 직원으로 등록되어 있지 않습니다. 시트의 [직원] 탭에 추가해 주세요.');
+  var staffName = Core.str(staff.name) || email.split('@')[0];
+  return { email: email, name: actor_(req, staffName), staffName: staffName, role: Core.str(staff.role), admin: true };
+}
+function staffOf_(email) {
   var staff = null;
   table_(SHEET.STAFF).rows.forEach(function (r) { if (Core.str(r.email).toLowerCase() === email) staff = r; });
-  if (!staff) throw apiError_('FORBIDDEN', email + ' 계정은 직원으로 등록되어 있지 않습니다. 시트의 [직원] 탭에 추가해 주세요.');
-  return { email: email, name: Core.str(staff.name) || email.split('@')[0], role: Core.str(staff.role), session: sess };
+  return staff;
 }
+
+/* ───────── 4자리 접속 코드 ───────── */
+
+function codeGen_() { return PropertiesService.getScriptProperties().getProperty('CODE_GEN') || '1'; }
+function codeHash_(code) {
+  var p = PropertiesService.getScriptProperties(), salt = p.getProperty('CODE_SALT');
+  if (!salt) { salt = Utilities.getUuid(); p.setProperty('CODE_SALT', salt); }
+  return Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + ':' + code));
+}
+var EASY_CODES = ['0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999', '1234', '4321', '0123', '9876', '1004'];
+/** 접속 코드를 정합니다. 코드를 바꾸면 코드로 들어와 있던 모든 기기가 잠깁니다 */
+function setCode_(code) {
+  code = Core.str(code);
+  if (!/^\d{4}$/.test(code)) throw bad_('접속 코드는 숫자 4자리로 정해 주세요.');
+  if (EASY_CODES.indexOf(code) >= 0) throw bad_('너무 쉬운 코드입니다. 다른 숫자로 정해 주세요.');
+  var p = PropertiesService.getScriptProperties();
+  p.setProperty('CODE_HASH', codeHash_(code));
+  p.setProperty('CODE_GEN', String((+codeGen_() || 1) + 1));
+  CacheService.getScriptCache().put('codefail', '0', 1);
+}
+
+API.lockInfo = function () {
+  return { hasCode: !!PropertiesService.getScriptProperties().getProperty('CODE_HASH'), codeVersion: CODE_VERSION };
+};
+
+/** 잠금 풀기: 맞으면 12시간짜리 표와 처음 화면 데이터를 한 번에 돌려줍니다 (요청 한 번으로 바로 시작) */
+API.unlock = function (req) {
+  var p = PropertiesService.getScriptProperties(), hash = p.getProperty('CODE_HASH');
+  if (!hash) throw apiError_('NO_CODE', '아직 접속 코드가 없습니다. 관리자가 구글 로그인으로 들어가 코드를 정해 주세요.');
+  var cache = CacheService.getScriptCache(), fails = +(cache.get('codefail') || 0);
+  if (fails >= CODE_TRIES) throw apiError_('LOCKED', '코드를 여러 번 틀려서 10분 동안 잠겼습니다. 잠시 후 다시 해 주세요.');
+  var code = Core.str(req.code);
+  if (!/^\d{4}$/.test(code) || !sameText_(codeHash_(code), hash)) {
+    fails++;
+    cache.put('codefail', String(fails), CODE_LOCK_SEC);
+    if (fails >= CODE_TRIES) log_({ name: '(잠금)' }, '접속 코드 잠김', '', '코드를 ' + CODE_TRIES + '번 틀려 10분 동안 잠김');
+    throw apiError_('WRONG_CODE', '코드가 맞지 않습니다.', { left: Math.max(0, CODE_TRIES - fails) });
+  }
+  var user = { email: '', name: actor_(req, '공용 기기'), role: '', admin: false };
+  var out = bootData_(user);
+  out.session = makeSession_({ r: 'c', g: codeGen_(), x: Date.now() + CODE_HOURS * 3600000 });
+  return out;
+};
 
 /** 구글 로그인 정보(1시간짜리)를 확인하고 이메일을 돌려줍니다 */
 function googleEmail_(token) {
@@ -250,8 +319,7 @@ function settings_() {
     maskDays: parseInt(m['연락처보관일수'], 10) || 365,
     locs: locs, centerName: m['센터이름'] || '울산창의융합교육센터', centerPhone: m['센터전화'] || '',
     programBuffer: isNaN(parseInt(m['센터사용여유일수'], 10)) ? 7 : Math.max(0, parseInt(m['센터사용여유일수'], 10)),
-    programQty: parseInt(m['센터사용기본수량'], 10) > 0 ? parseInt(m['센터사용기본수량'], 10) : 18,
-    sessionDays: Math.min(90, Math.max(1, parseInt(m['로그인유지일수'], 10) || 14))
+    programQty: parseInt(m['센터사용기본수량'], 10) > 0 ? parseInt(m['센터사용기본수량'], 10) : 18
   };
 }
 
@@ -327,31 +395,48 @@ function saveImage_(dataUrl, kind, label) {
 
 /* ───────── API ───────── */
 
-var API = {};
 
-/** 구글 로그인 확인이 끝난 직원에게 센터 앱 로그인 표를 발급합니다 */
+/** 구글 로그인 확인이 끝난 직원에게 30분짜리 관리자 표를 발급합니다 */
 API.login = function (req, user) {
-  var days = user.session ? user.session.d : settings_().sessionDays;
-  return { session: makeSession_(user.email, days), days: days };
+  if (!user.admin) throw apiError_('ADMIN', '구글 로그인으로 확인해 주세요.');
+  return { session: makeSession_({ r: 'a', e: user.email, x: Date.now() + ADMIN_MINUTES * 60000 }), minutes: ADMIN_MINUTES, name: user.staffName, email: user.email };
+};
+
+/** 관리 화면: 직원 이메일, 시트·Apps Script 주소, 접속 코드 상태 */
+API.adminInfo = function () {
+  return { staff: plainAll_(rows_(SHEET.STAFF, 'email')), sheetUrl: ss_().getUrl(), scriptUrl: scriptUrl_(), hasCode: !!PropertiesService.getScriptProperties().getProperty('CODE_HASH') };
+};
+
+API.setAccessCode = function (req, user) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw apiError_('BUSY', '잠시 후 다시 해 주세요.');
+  try { setCode_(req.code); } finally { lock.releaseLock(); }
+  log_(user, '접속 코드 변경', '', '코드로 들어와 있던 기기는 모두 잠김');
+  return { hasCode: true };
 };
 
 API.rev = function () {
   return { rev: PropertiesService.getScriptProperties().getProperty('REV') || '0' };
 };
 
-API.boot = function (req, user) {
+API.boot = function (req, user) { return bootData_(user); };
+
+function bootData_(user) {
   ensureSettings_();
   housekeeping_();
   var d = load_();
+  var staff = rows_(SHEET.STAFF, 'email');
   return {
-    user: { email: user.email, name: user.name, role: user.role }, today: today_(), settings: settings_(), sheetUrl: ss_().getUrl(), scriptUrl: scriptUrl_(),
+    user: { email: user.email, name: user.admin ? user.staffName : '', role: user.role, admin: !!user.admin }, today: today_(), settings: settings_(),
+    sheetUrl: user.admin ? ss_().getUrl() : '', scriptUrl: user.admin ? scriptUrl_() : '',
     codeVersion: CODE_VERSION, coreVersion: Core.VERSION,
     rev: PropertiesService.getScriptProperties().getProperty('REV') || '0',
-    staff: plainAll_(rows_(SHEET.STAFF, 'email')),
+    staffNames: staff.map(function (r) { return Core.str(r.name); }).filter(Boolean),
+    staff: user.admin ? plainAll_(staff) : [],
     items: plainAll_(d.items), rentals: plainAll_(d.rentals), lines: plainAll_(d.lines), repairs: plainAll_(d.repairs), programs: plainAll_(d.programs),
     rooms: plainAll_(d.rooms).sort(function (a, b) { return a.order - b.order; }), reservations: plainAll_(d.reservations)
   };
-};
+}
 
 /** 새 설정 항목이 시트에 없으면 한 번만 추가합니다 (이전 버전에서 올린 시트를 위해) */
 function ensureSettings_() {
@@ -363,8 +448,7 @@ function ensureSettings_() {
     var have = {};
     rows_(SHEET.SETTINGS, 'key').forEach(function (r) { have[r.key] = 1; });
     [['센터사용기본수량', '18', '센터 프로그램에서 교구마다 기본으로 잡아 둘 수량 (정원 16명 + 여유 2)'],
-      ['센터사용여유일수', '7', '센터 프로그램 앞뒤로 대여를 막는 날 수 (준비·점검 기간)'],
-      ['로그인유지일수', '14', '한 번 로그인하면 며칠 동안 다시 로그인하지 않아도 되는지 (1~90)']].forEach(function (r) {
+      ['센터사용여유일수', '7', '센터 프로그램 앞뒤로 대여를 막는 날 수 (준비·점검 기간)']].forEach(function (r) {
       if (!have[r[0]]) put_(SHEET.SETTINGS, { key: r[0], value: r[1], hint: r[2] });
     });
     p.setProperty('SETTINGS_VER', '3');
@@ -781,14 +865,23 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('창의센터 앱')
     .addItem('초기 설정 (처음 한 번)', 'setupSheets')
     .addItem('오래된 연락처 지금 가리기', 'maskNow')
+    .addItem('접속 코드 정하기', 'setCodeMenu')
     .addItem('모든 기기에서 로그아웃', 'resetSessions')
     .addToUi();
 }
 
-/** 모든 직원의 로그인 표를 무효로 만듭니다 (분실·퇴직 등). 다음에 접속할 때 모두 다시 로그인합니다 */
+/** 모든 기기의 로그인 표를 무효로 만듭니다 (분실·퇴직 등). 다음에 접속할 때 모두 다시 코드를 입력합니다 */
 function resetSessions() {
   PropertiesService.getScriptProperties().deleteProperty('SESSION_SECRET');
-  try { SpreadsheetApp.getUi().alert('모든 기기에서 로그아웃했습니다. 다음에 접속하면 다시 로그인해야 합니다.'); } catch (e) { /* 메뉴 밖에서 실행한 경우 */ }
+  try { SpreadsheetApp.getUi().alert('모든 기기에서 로그아웃했습니다. 다음에 접속하면 다시 코드를 입력해야 합니다.'); } catch (e) { /* 메뉴 밖에서 실행한 경우 */ }
+}
+
+/** 시트 메뉴에서 접속 코드 정하기 (앱의 관리자 메뉴에서도 바꿀 수 있음) */
+function setCodeMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var r = ui.prompt('접속 코드 정하기', '앱을 열 때 입력할 숫자 4자리를 적어 주세요.\n바꾸면 코드로 들어와 있던 기기는 모두 잠깁니다.', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  try { setCode_(r.getResponseText()); ui.alert('접속 코드를 정했습니다.'); } catch (e) { ui.alert(e.message); }
 }
 
 function maskNow() {

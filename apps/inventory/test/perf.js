@@ -49,15 +49,15 @@ const server = http.createServer((req, res) => {
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
   const page = await ctx.newPage();
-  const payload = Buffer.from(JSON.stringify({ email: 'owner@example.com', exp: Math.floor(Date.now() / 1000) + 3000 })).toString('base64url');
-  await page.addInitScript((tok) => sessionStorage.setItem('idtoken', tok), 'x.' + payload + '.y');
+  env.call('setAccessCode', { code: '2580' });
   await page.route('https://accounts.google.com/**', (r) => r.fulfill({ body: 'window.google={accounts:{id:{initialize(){},renderButton(){},prompt(){}}}};', contentType: 'text/javascript' }));
   await page.route('https://api.test/**', async (route) => {
-    const body = JSON.parse(route.request().postData()); delete body.token;
-    await route.fulfill({ body: JSON.stringify(env.call(body.action, body)), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
+    const body = JSON.parse(route.request().postData()); const tok = body.token; delete body.token;
+    const out = tok && tok.startsWith('s1.') ? JSON.parse(env.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ token: tok }, body)) } }).s) : env.call(body.action, body);
+    await route.fulfill({ body: JSON.stringify(out), contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' } });
   });
   const time = async (label, fn) => { const s = Date.now(); await fn(); console.log(label, Date.now() - s, 'ms'); };
-  await time('브리핑이 뜰 때까지(데이터 받기 포함, 서버 시간 제외)', async () => { await page.goto(base); await page.waitForSelector('.top h1'); });
+  await time('브리핑이 뜰 때까지(데이터 받기 포함, 서버 시간 제외)', async () => { await page.goto(base); await page.waitForSelector('#lk-dots'); await page.keyboard.type('2580'); await page.waitForSelector('.top h1'); });
   await time('물품 목록 열기', async () => { await page.click('#nav [data-to=items]'); await page.waitForSelector('#ilist .item'); });
   await time('물품 검색 한 글자 입력', async () => { await page.fill('#iq', 'ㄱ'); await page.waitForSelector('#ilist .item'); });
   await time('대여 목록 열기', async () => { await page.goto(base + '#/rentals'); await page.waitForSelector('.card'); });

@@ -127,7 +127,7 @@
       '<section class="card">' + App.dateInput('r-date', '날짜', R.date, App.quickStart(), 'rdate') + '<div style="height:1px;background:var(--line2)"></div>' +
       '<div class="col gap6"><span class="small b" style="color:var(--soft)">시간 <span class="xs muted" id="rtimehint"></span></span><div class="pills">' + TIMES.map(function (t) { return '<button type="button" class="pill" data-act="rtime" data-s="' + t[1] + '" data-e="' + t[2] + '">' + t[0] + '</button>'; }).join('') + '</div>' +
       '<div class="grid2">' + App.timeInput('r-start', '시작 (24시간)', R.start) + App.timeInput('r-end', '끝 (24시간)', R.end) + '</div><span class="xs muted">키보드로 숫자만 치면 돼요. 0900 → 09:00, 1730 → 17:30</span></div></section>' +
-      '<section class="card" id="rfields"></section></form></div>' +
+      '<section class="card" id="rfields"></section><section class="card">' + App.actorField(v ? '처리 직원' : '등록 직원') + '</section></form></div>' +
       '<div class="bar-bottom"><div class="in"><button class="btn primary block lg" data-act="ressave">저장</button></div></div>';
     return { html: h, tab: 'rooms', after: function () { drawKinds(); drawRooms(); drawFields(); } };
   };
@@ -189,6 +189,7 @@
   App.acts.ressave = function (el) {
     collect();
     if (Core.parseTime(R.start) === null || Core.parseTime(R.end) === null) { App.toast('시간은 24시간으로 0900 처럼 입력해 주세요. (오후 3시 → 1500)', true); return; }
+    if (!App.needActor()) return;
     var send = function (force) {
       return App.api('resSave', payload(force)).then(function (res) {
         App.apply(res); App.toast(R.id ? '수정했습니다.' : '예약을 저장했습니다.');

@@ -252,4 +252,29 @@
     return phone ? '<a href="tel:' + esc(String(phone).replace(/[^\d+]/g, '')) + '" class="row gap4" style="display:inline-flex">' + esc(phone) + '</a>' : '<span class="muted">없음</span>';
   };
   App.sum = function (rid, max) { return esc(Core.linesSummary(App.linesOf(rid), App.imap(), max || 2)); };
+
+  /**
+   * [처리 직원] 칸: 직원 탭에 등록된 이름이 목록으로 나오고, 직접 적을 수도 있습니다.
+   * 이름 목록은 잠금을 풀 때 함께 받아 두므로 따로 불러오지 않습니다. 마지막으로 적은 이름을 이 기기에 기억합니다.
+   */
+  App.actorField = function (label) {
+    var S = App.S, names = (S.staffNames || []).filter(function (n, i, a) { return n && a.indexOf(n) === i; });
+    return '<label class="f">' + esc(label || '처리 직원') + '<input id="f-actor" list="actor-dl" data-in="actor" value="' + esc(S.actor) + '" placeholder="이름을 고르거나 적어 주세요" autocomplete="off" maxlength="20"></label>' +
+      '<datalist id="actor-dl">' + names.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>' +
+      (names.length ? '<div class="pills" style="margin-top:-2px">' + names.slice(0, 8).map(function (n) { return '<button type="button" class="pill' + (n === S.actor ? ' on' : '') + '" data-act="actorpick" data-v="' + esc(n) + '">' + esc(n) + '</button>'; }).join('') + '</div>' : '');
+  };
+  App.ins.actor = function (el) { App.setActor(el.value); markActor(); };
+  App.acts.actorpick = function (el) { var v = el.getAttribute('data-v'), inp = document.getElementById('f-actor'); if (inp) inp.value = v; App.setActor(v); markActor(); };
+  function markActor() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-act=actorpick]'), function (b) { b.classList.toggle('on', b.getAttribute('data-v') === App.S.actor); });
+  }
+  /** 저장 전에 [처리 직원]이 비어 있으면 알려 주고 false */
+  App.needActor = function () {
+    var inp = document.getElementById('f-actor');
+    if (inp) App.setActor(inp.value);
+    if (App.S.actor) return true;
+    App.toast('처리 직원 이름을 고르거나 적어 주세요.', true);
+    if (inp) inp.focus();
+    return false;
+  };
 })();

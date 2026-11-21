@@ -282,3 +282,18 @@ table.tb td.n, table.tb th.n { text-align: right; }
 /* 탭 안의 건수 표시 */
 .tabs button .chip { vertical-align: middle; margin-left: 2px; }
 .top .tabs { margin: 0 -16px -1px; }
+
+/* 잠금 화면 (4자리 접속 코드) */
+.lock { max-width: 360px; margin: 8vh auto 0; padding: 24px 20px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.lock .brand { font-size: 20px; font-weight: 700; }
+.lock #lk-msg { min-height: 40px; margin: 0; line-height: 1.5; }
+.lkdots { display: flex; gap: 18px; margin: 6px 0 14px; }
+.lkdots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--ink); }
+.lkdots i.on { background: var(--ink); }
+.lkdots.shake { animation: lkshake .35s; }
+@keyframes lkshake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-10px); } 75% { transform: translateX(10px); } }
+.keypad { display: grid; grid-template-columns: repeat(3, 76px); gap: 14px 22px; }
+.keypad button { width: 76px; height: 76px; border-radius: 50%; border: 1px solid var(--line); background: #fff; font: inherit; font-size: 28px; font-weight: 500; color: var(--ink); cursor: pointer; }
+.keypad button:active { background: var(--line2); }
+.lock #gbtn, .gbtn { display: flex; justify-content: center; margin-top: 8px; min-height: 44px; }
+@media (prefers-reduced-motion: reduce) { .lkdots.shake { animation: none; } }
