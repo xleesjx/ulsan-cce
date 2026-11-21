@@ -422,4 +422,66 @@ let V1;
   ok(raw('unlock', null, { code: '1357' }).ok, '코드는 그대로 쓸 수 있음');
 })();
 
+/* 16. 서버 코드 자동 업데이트 (가짜 GitHub·가짜 Apps Script API) */
+(function selfUpdate() {
+  const fs = require('fs'), path = require('path');
+  const e = createEnv({ now: new Date('2026-11-06T10:00:00+09:00') });
+  e.ctx.setupSheets();
+  const raw = (action, token, extra) => JSON.parse(e.ctx.doPost({ postData: { contents: JSON.stringify(Object.assign({ action, token }, extra || {})) } }).s);
+  const codeSrc = fs.readFileSync(path.join(__dirname, '../gas/Code.gs'), 'utf8');
+  const coreSrc = fs.readFileSync(path.join(__dirname, '../gas/Core.gs'), 'utf8');
+  const newCode = codeSrc.replace(/var CODE_VERSION = \d+;/, 'var CODE_VERSION = 99;');
+  const project = { files: [{ name: 'appsscript', type: 'JSON', source: '{"timeZone":"Asia/Seoul"}' }, { name: 'Code', type: 'SERVER_JS', source: codeSrc, functionSet: {} }, { name: 'Core', type: 'SERVER_JS', source: coreSrc }] };
+  const deployments = [{ deploymentId: 'HEAD1', deploymentConfig: { scriptId: 'SCRIPT123' }, entryPoints: [{ entryPointType: 'WEB_APP' }] },
+    { deploymentId: 'DEP1', deploymentConfig: { scriptId: 'SCRIPT123', versionNumber: 3, manifestFileName: 'appsscript', description: '웹앱' }, entryPoints: [{ entryPointType: 'WEB_APP' }] }];
+  let apiOn = true, gh = { code: newCode, core: coreSrc }, versions = 3, puts = [];
+  e.ctx.ScriptApp.getOAuthToken = () => 'owner-oauth';
+  const f0 = e.ctx.UrlFetchApp.fetch;
+  e.ctx.UrlFetchApp.fetch = (url, opt) => {
+    const res = (code, obj) => ({ getResponseCode: () => code, getContentText: () => (typeof obj === 'string' ? obj : JSON.stringify(obj)) });
+    if (url.startsWith('https://raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/Code.gs?t=')) return res(200, gh.code);
+    if (url.startsWith('https://raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/Core.gs?t=')) return res(200, gh.core);
+    if (url.startsWith('https://script.googleapis.com/v1/projects/SCRIPT123')) {
+      assert.strictEqual(opt.headers.Authorization, 'Bearer owner-oauth');
+      if (!apiOn) return res(403, { error: { message: 'User has not enabled the Apps Script API.' } });
+      const p = url.slice('https://script.googleapis.com/v1/projects/SCRIPT123'.length), m = (opt.method || 'get').toLowerCase();
+      if (p === '/content' && m === 'get') return res(200, project);
+      if (p === '/content' && m === 'put') { project.files = JSON.parse(opt.payload).files; puts.push('content'); return res(200, project); }
+      if (p === '/versions' && m === 'post') return res(200, { versionNumber: ++versions });
+      if (p === '/deployments' && m === 'get') return res(200, { deployments });
+      if (p.startsWith('/deployments/') && m === 'put') { puts.push(p.slice(13) + ':' + JSON.parse(opt.payload).deploymentConfig.versionNumber); return res(200, {}); }
+      return res(404, 'no');
+    }
+    return f0(url, opt);
+  };
+  const A = raw('login', 'tok:owner@example.com').session;
+  e.ctx.setCode_('2580');
+  const U = raw('unlock', null, { code: '2580' }).session;
+  eq(raw('serverUpdate', U).code, 'ADMIN', '코드 접속으로는 서버 업데이트 불가');
+  const chk = raw('serverUpdate', A, { check: true });
+  eq([chk.current >= 7, chk.latest, chk.same], [true, 99, false], '최신 버전 확인(바꾸지 않음)');
+  eq(puts.length, 0, '확인만 할 때는 아무것도 바꾸지 않음');
+  apiOn = false;
+  eq(raw('serverUpdate', A).code, 'UPDATE_SETUP', 'Apps Script API가 꺼져 있으면 준비 안내');
+  apiOn = true;
+  gh.code = '<html>404</html>';
+  eq(raw('serverUpdate', A).code, 'UPDATE', 'GitHub 내용이 이상하면 멈춤');
+  eq(puts.length, 0, '이상하면 아무것도 바꾸지 않음');
+  gh.code = newCode;
+  const r = raw('serverUpdate', A);
+  ok(r.ok && r.latest === 99 && r.version === 4 && r.deployments === 1, '업데이트: ' + JSON.stringify(r));
+  eq(puts, ['content', 'DEP1:4'], '코드를 바꾸고 웹앱 배포만 새 버전으로 (HEAD 제외)');
+  eq(project.files.find((f) => f.name === 'Code').source, newCode, 'Code 파일이 GitHub 내용으로 바뀜');
+  eq(project.files.find((f) => f.name === 'appsscript').source, '{"timeZone":"Asia/Seoul"}', 'appsscript.json은 그대로');
+  ok(!('functionSet' in project.files.find((f) => f.name === 'Code')), '보낼 때 이름·종류·내용만');
+  ok(e.table('변경기록').some((x) => x[2] === '서버 코드 업데이트'), '변경기록에 남음');
+  // Core 파일이 없던 프로젝트면 추가
+  project.files = project.files.filter((f) => f.name !== 'Core');
+  e.props.DEPLOYED_HASH = '';
+  ok(raw('serverUpdate', A).ok && project.files.some((f) => f.name === 'Core' && f.source === coreSrc), 'Core 파일이 없으면 새로 만듦');
+  e.ctx.SpreadsheetApp.getUi = () => ({ alert: (m) => { e.lastAlert = m; } });
+  e.ctx.updateServerCode();
+  ok(/업데이트|최신/.test(e.lastAlert), '시트 메뉴로도 업데이트: ' + e.lastAlert);
+})();
+
 console.log('api 테스트 통과: ' + passed + '개');

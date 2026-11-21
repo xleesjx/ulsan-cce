@@ -76,7 +76,7 @@
 
   /* ───────── 서버 코드가 오래됐는지 ───────── */
 
-  App.REQUIRED_CODE = 6;
+  App.REQUIRED_CODE = 7;
   /** 서버(Apps Script)의 코드가 이 화면보다 오래되면 true */
   App.outdated = function () { return !!S.data && (S.codeVersion < App.REQUIRED_CODE || S.coreVersion < Core.VERSION); };
   App.versionNotice = function () {

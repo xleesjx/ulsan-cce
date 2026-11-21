@@ -542,6 +542,19 @@ async function draw(page) {
   ok(await page.locator('a[href*="raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/Code.gs"]').count() === 1 && await page.locator('a[href$="Core.gs"]').count() === 1, '새 Code.gs·Core.gs 열기 버튼');
   ok(/서버 코드가 최신/.test(await page.textContent('#view')) && !(await page.evaluate(() => window.App.outdated())), '서버 코드가 최신이면 안내만');
   ok(/owner@example\.com/.test(await page.textContent('#view')) && await page.locator('[data-act=stcsv]').count() === 3, '관리자 메뉴에 직원 이메일과 엑셀 내려받기');
+  await page.waitForSelector('#ad-upd .btn, #ad-upd [style*="red"]');
+  ok(/자동 업데이트/.test(await page.textContent('#ad-upd')), '관리자 메뉴에 서버 코드 자동 업데이트');
+  // 가짜 GitHub에 새 버전이 있으면 [지금 업데이트]
+  {
+    const src = fs.readFileSync(path.join(__dirname, '../gas/Code.gs'), 'utf8').replace(/var CODE_VERSION = \d+;/, 'var CODE_VERSION = 99;');
+    const core = fs.readFileSync(path.join(__dirname, '../gas/Core.gs'), 'utf8');
+    const f0 = env.ctx.UrlFetchApp.fetch;
+    env.ctx.UrlFetchApp.fetch = (url, opt) => url.includes('raw.githubusercontent.com') ? { getResponseCode: () => 200, getContentText: () => (url.includes('Core.gs') ? core : src) } : f0(url, opt);
+    await page.click('[data-act=updcheck]').catch(() => {});
+    await page.waitForSelector('[data-act=updrun]');
+    ok(/GitHub 최신 99/.test(await page.textContent('#ad-upd')), '새 버전이 있으면 [지금 업데이트] 버튼');
+    env.ctx.UrlFetchApp.fetch = f0;
+  }
   await shot('13-관리자메뉴');
   // 쉬운 코드는 거절, 새 코드로 바꾸기
   await page.fill('#ad-c1', '1234'); await page.fill('#ad-c2', '1234');

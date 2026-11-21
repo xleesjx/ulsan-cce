@@ -9,18 +9,71 @@
   function adminHtml() {
     var r = App.repo(), raw = 'https://raw.githubusercontent.com/' + r.owner + '/' + r.name + '/main/apps/inventory/gas/';
     function link(href, text) { return '<a class="btn" href="' + esc(href) + '" target="_blank" rel="noopener">' + text + '</a>'; }
-    return '<section class="card"><h2>관리 · 코드 업데이트</h2>' + App.versionNotice() +
+    return '<section class="card"><h2>바로가기 · 직접 업데이트</h2>' +
       (App.outdated() ? '' : '<span class="small" style="color:var(--green-ink);font-weight:700">서버 코드가 최신입니다 (Code ' + S.codeVersion + ' · Core ' + S.coreVersion + ')</span>') +
       (S.scriptUrl ? '' : '<span class="xs muted">서버 코드를 한 번 업데이트하면 [Apps Script 열기] 버튼이 나타나요. 이번 한 번은 구글 시트의 <b>확장 프로그램 → Apps Script</b>로 들어가 주세요.</span>') +
       '<div class="col gap8">' + (S.sheetUrl ? link(S.sheetUrl, '구글 시트 열기') : '') + (S.scriptUrl ? link(S.scriptUrl, 'Apps Script 열기 (코드 붙여넣는 곳)') : '') +
       link(raw + 'Code.gs', '새 Code.gs 열기 (전체 복사용)') + link(raw + 'Core.gs', '새 Core.gs 열기 (전체 복사용)') + link('https://github.com/' + r.owner + '/' + r.name, 'GitHub 저장소 열기') + '</div>' +
-      '<details><summary class="small b" style="cursor:pointer;min-height:36px;display:flex;align-items:center">코드 업데이트 방법</summary><ol class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.8;color:var(--soft)">' +
+      '<details><summary class="small b" style="cursor:pointer;min-height:36px;display:flex;align-items:center">직접 붙여넣어 업데이트하는 방법 (자동 업데이트가 안 될 때)</summary><ol class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.8;color:var(--soft)">' +
       '<li><b>새 Code.gs 열기</b>를 누르고, 새 탭에서 <b>Ctrl+A → Ctrl+C</b>로 전체를 복사합니다.</li>' +
       '<li><b>Apps Script 열기</b>에서 왼쪽 <b>Code.gs</b>를 누르고 <b>Ctrl+A → Ctrl+V</b>로 바꿉니다.</li>' +
       '<li><b>Core</b> 파일도 같은 방법으로 바꾸고 💾 저장합니다.</li>' +
       '<li>오른쪽 위 <b>배포 → 배포 관리 → ✏️ → 버전: 새 버전 → 배포</b></li>' +
       '<li>이 앱에서 <b>Ctrl+Shift+R</b> 새로고침</li></ol></details></section>';
   }
+
+  /* 서버 코드 자동 업데이트: GitHub 최신 코드로 Apps Script를 바꾸고 배포까지 (관리자만) */
+  var UPD = { state: 'idle', r: null, err: null, code: '' };
+  function updHtml() {
+    var h = '<section class="card" id="ad-upd"><h2>서버 코드 자동 업데이트</h2>';
+    if (UPD.state === 'checking') h += '<span class="small muted">GitHub의 최신 서버 코드를 확인하는 중…</span>';
+    else if (UPD.state === 'running') h += '<div class="row gap8"><div class="spin" style="width:20px;height:20px;margin:0"></div><span class="small b">업데이트하고 배포하는 중… (30초쯤 걸려요. 창을 닫지 마세요)</span></div>';
+    else if (UPD.state === 'done') h += '<span class="small" style="color:var(--green-ink);font-weight:700">서버 코드를 ' + esc(UPD.r.latest) + '(으)로 바꾸고 배포했습니다.</span><span class="xs muted">1분쯤 뒤 [최신으로 새로고침]을 누르면 반영돼요.</span><button class="btn" data-act="updreload">최신으로 새로고침</button>';
+    else if (UPD.state === 'ready') {
+      var r = UPD.r, newer = !r.same;
+      h += '<span class="small">지금 서버 코드 <b>' + esc(r.current) + '</b> · GitHub 최신 <b>' + esc(r.latest) + '</b></span>' +
+        (newer ? '<button class="btn primary" data-act="updrun">지금 업데이트</button><span class="xs muted">GitHub에 올라간 최신 코드로 Apps Script를 바꾸고 새 버전으로 배포합니다. 붙여넣기는 필요 없어요.</span>' :
+          '<span class="small" style="color:var(--green-ink);font-weight:700">최신입니다. 할 일이 없어요.</span><button class="btn sm" data-act="updrun">그래도 다시 배포</button>');
+    } else if (UPD.state === 'error') {
+      h += '<span class="small" style="color:var(--red);font-weight:700">' + esc(UPD.err) + '</span>';
+      if (UPD.code === 'UPDATE_SETUP' || UPD.code === 'BAD_ACTION') h += setupHtml();
+      h += '<button class="btn sm" data-act="updcheck">다시 확인</button>';
+    } else h += '<button class="btn" data-act="updcheck">최신 버전 확인</button>';
+    return h + '</section>';
+  }
+  function setupHtml() {
+    var r = App.repo(), raw = 'https://raw.githubusercontent.com/' + r.owner + '/' + r.name + '/main/apps/inventory/gas/';
+    return '<div class="tip blue" style="line-height:1.8"><b>처음 한 번만 준비해 주세요</b><ol class="small" style="margin:6px 0 0;padding-left:20px">' +
+      '<li><a href="https://script.google.com/home/usersettings" target="_blank" rel="noopener">Apps Script 설정</a>에서 <b>Google Apps Script API</b>를 <b>사용</b>으로 켭니다.</li>' +
+      '<li>Apps Script 편집기에서 <b>appsscript.json</b>을 <a href="' + esc(raw + 'appsscript.json') + '" target="_blank" rel="noopener">새 내용</a>으로 바꿉니다 (Ctrl+A → Ctrl+V). <b>Code.gs</b>, <b>Core</b>도 아래 [새 Code.gs 열기]·[새 Core.gs 열기]로 한 번 바꾸고 💾 저장합니다.</li>' +
+      '<li>위쪽 함수 칸에서 <b>prepareUpdate</b>를 고르고 <b>▶ 실행</b> → 권한 창에서 <b>허용</b>합니다.</li>' +
+      '<li><b>배포 → 배포 관리 → ✏️ → 새 버전 → 배포</b>를 한 번 합니다. 다음부터는 이 버튼으로 끝납니다.</li></ol></div>';
+  }
+  function drawUpd() { var el = document.getElementById('ad-upd'); if (el) el.outerHTML = updHtml(); }
+  function updCheck() {
+    UPD.state = 'checking'; drawUpd();
+    return App.adminApi('serverUpdate', { check: true }).then(function (r) { UPD.state = 'ready'; UPD.r = r; drawUpd(); }, updFail);
+  }
+  function updFail(e) {
+    if (e.code === 'ADMIN') { App.toast(e.message, true); App.render(); return; }
+    UPD.state = 'error'; UPD.code = e.code || '';
+    UPD.err = e.code === 'BAD_ACTION' ? '지금 서버 코드에는 자동 업데이트 기능이 없어요. 아래 준비를 한 번 해 주세요.' : e.message;
+    drawUpd();
+  }
+  App.acts.updcheck = function () { updCheck(); };
+  App.acts.updrun = function () {
+    App.confirm('서버 코드를 업데이트할까요?', 'GitHub의 최신 코드로 바꾸고 새 버전으로 배포합니다.', '업데이트').then(function (ok) {
+      if (!ok) return;
+      UPD.state = 'running'; drawUpd();
+      App.adminApi('serverUpdate', {}).then(function (r) {
+        UPD.r = r; UPD.state = r.same ? 'ready' : 'done'; drawUpd();
+        App.toast(r.same ? '이미 최신입니다.' : '서버 코드를 업데이트했습니다.');
+      }, updFail);
+    });
+  };
+  App.acts.updreload = function (el) {
+    App.run(el, function () { return App.reload(false).then(function () { UPD.state = 'idle'; App.toast('최신 내용으로 바꿨습니다.'); }); });
+  };
 
   App.views.more = function () {
     var waiting = S.data.repairs.filter(function (r) { return r.kind === '고장' && r.status === '대기'; }).length;
@@ -233,6 +286,7 @@
     if (!AD.info) AD.info = { staff: S.staff, sheetUrl: S.sheetUrl, scriptUrl: S.scriptUrl, hasCode: null, loading: true };
     return { html: h, tab: 'more', after: function () {
       drawAdmin();
+      if (UPD.state === 'idle' || UPD.state === 'error') updCheck();
       var fill = function (info) { AD.info = info; S.sheetUrl = info.sheetUrl || S.sheetUrl; S.scriptUrl = info.scriptUrl || S.scriptUrl; drawAdmin(); };
       App.adminApi('adminInfo').then(fill, function (e) {
         if (e.code === 'BAD_ACTION') { fill({ staff: S.staff, sheetUrl: S.sheetUrl, scriptUrl: S.scriptUrl, hasCode: false, old: true }); return; }
@@ -250,7 +304,7 @@
   }
   function adminBody(info) {
     return (info.error ? '<div class="tip" style="background:var(--red-soft);border-color:var(--red-line);color:var(--red)"><b>서버에서 관리 정보를 받지 못했습니다.</b> ' + esc(info.error) + ' <button class="textbtn" style="padding:0;min-height:0;color:var(--red);text-decoration:underline" data-act="adretry">다시 시도</button></div>' : '') +
-      '<section class="card"><h2>앱 접속 코드 (4자리)</h2>' +
+      updHtml() + '<section class="card"><h2>앱 접속 코드 (4자리)</h2>' +
       (info.old ? '<span class="small" style="color:var(--red)">서버 코드를 먼저 업데이트해야 접속 코드를 쓸 수 있어요. 아래 [코드 업데이트 방법]을 따라 해 주세요.</span>' :
         (info.hasCode === null ? '<span class="small muted">코드 상태를 확인하는 중…</span>' :
           '<span class="small ' + (info.hasCode ? 'muted' : '') + '" style="' + (info.hasCode ? '' : 'color:var(--red);font-weight:700') + '">' + (info.hasCode ? '접속 코드가 정해져 있어요. 보안을 위해 지금 코드는 보여 주지 않습니다.' : '아직 접속 코드가 없어요. 직원들이 앱을 열려면 코드를 먼저 정해 주세요.') + '</span>') +
@@ -263,7 +317,7 @@
       adminHtml();
   }
   App.acts.adretry = function () { AD.info = null; App.render(); };
-  App.acts.adend = function () { S.admin = null; AD.info = null; App.toast('관리자 확인을 끝냈습니다.'); App.render(); };
+  App.acts.adend = function () { S.admin = null; AD.info = null; UPD.state = 'idle'; App.toast('관리자 확인을 끝냈습니다.'); App.render(); };
   App.acts.adcode = function (el) {
     var c1 = document.getElementById('ad-c1').value.trim(), c2 = document.getElementById('ad-c2').value.trim();
     if (!/^\d{4}$/.test(c1)) { App.toast('숫자 4자리로 적어 주세요.', true); return; }

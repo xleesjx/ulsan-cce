@@ -10,7 +10,7 @@
 
 var TZ = 'Asia/Seoul';
 /** 화면이 요구하는 서버 코드 번호보다 낮으면 앱이 '서버 코드를 업데이트하세요'라고 알려 줍니다 */
-var CODE_VERSION = 6;
+var CODE_VERSION = 7;
 var SESSION_PREFIX = 's1.';
 /** 화면이 부르는 서버 기능 모음 */
 var API = {};
@@ -54,7 +54,7 @@ function doGet() {
 /** 로그인 없이 부를 수 있는 요청 (잠금 화면용) */
 var OPEN = { lockInfo: 1, unlock: 1 };
 /** 구글 로그인(관리자 확인)이 있어야 하는 요청 */
-var ADMIN_ONLY = { adminInfo: 1, setAccessCode: 1 };
+var ADMIN_ONLY = { adminInfo: 1, setAccessCode: 1, serverUpdate: 1 };
 
 function doPost(e) {
   var out;
@@ -859,6 +859,95 @@ API.file = function (req) {
   return { mime: blob.getContentType(), data: Utilities.base64Encode(blob.getBytes()) };
 };
 
+/* ───────── 서버 코드 자동 업데이트 ─────────
+ * GitHub에 올라간 최신 Code.gs·Core.gs를 가져와 이 Apps Script 프로젝트의 코드를 바꾸고, 새 버전으로 배포까지 합니다.
+ * 처음 한 번 준비: ① Apps Script API 켜기(script.google.com/home/usersettings) ② appsscript.json 에 script.projects·script.deployments 권한
+ *                 ③ 편집기에서 prepareUpdate 를 한 번 실행해 권한 허용
+ * appsscript.json(권한 목록)은 바꾸지 않습니다. 권한이 바뀌면 그때만 직접 붙여넣습니다.
+ */
+var UPDATE_BASE = 'https://raw.githubusercontent.com/xleesjx/ulsan-cce/main/apps/inventory/gas/';
+
+function updateBase_() { return PropertiesService.getScriptProperties().getProperty('UPDATE_BASE') || UPDATE_BASE; }
+function fetchText_(url) {
+  var r = UrlFetchApp.fetch(url + '?t=' + Date.now(), { muteHttpExceptions: true });
+  if (r.getResponseCode() !== 200) throw apiError_('UPDATE', 'GitHub에서 파일을 받지 못했습니다 (' + r.getResponseCode() + '): ' + url);
+  return r.getContentText();
+}
+function scriptApi_(method, path, body) {
+  var opt = { method: method, muteHttpExceptions: true, contentType: 'application/json', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } };
+  if (body) opt.payload = JSON.stringify(body);
+  var r = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + path, opt);
+  var code = r.getResponseCode(), txt = r.getContentText();
+  if (code >= 300) {
+    if (/has not been used|is disabled|not enabled|SERVICE_DISABLED|User has not enabled the Apps Script API/i.test(txt)) {
+      throw apiError_('UPDATE_SETUP', 'Apps Script API가 꺼져 있습니다. script.google.com/home/usersettings 에서 [Google Apps Script API]를 켜고 몇 분 뒤 다시 해 주세요.');
+    }
+    if (code === 401 || code === 403) throw apiError_('UPDATE_SETUP', '자동 업데이트 권한이 없습니다. appsscript.json 에 권한 목록을 넣고, 편집기에서 prepareUpdate 를 한 번 실행해 [허용]을 눌러 주세요.');
+    throw apiError_('UPDATE', 'Apps Script 프로젝트를 바꾸지 못했습니다 (' + code + '): ' + txt.slice(0, 300));
+  }
+  return txt ? JSON.parse(txt) : {};
+}
+function verOf_(src) { var m = /var CODE_VERSION = (\d+)/.exec(src); return m ? +m[1] : 0; }
+function isCodeFile_(src) { return /function doPost\(/.test(src) && /var API = \{\}/.test(src); }
+function isCoreFile_(src) { return /var Core = \(function/.test(src); }
+
+/** dry 이면 최신 버전 번호만 알려 줍니다 */
+function selfUpdate_(dry, who) {
+  var base = updateBase_();
+  var code = fetchText_(base + 'Code.gs'), core = fetchText_(base + 'Core.gs');
+  if (!isCodeFile_(code) || !verOf_(code)) throw apiError_('UPDATE', 'GitHub의 Code.gs 내용이 올바르지 않아 업데이트를 멈췄습니다.');
+  if (!isCoreFile_(core)) throw apiError_('UPDATE', 'GitHub의 Core.gs 내용이 올바르지 않아 업데이트를 멈췄습니다.');
+  var latest = verOf_(code);
+  var hash = Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, code + '\n' + core));
+  var p = PropertiesService.getScriptProperties();
+  var same = p.getProperty('DEPLOYED_HASH') === hash && latest === CODE_VERSION;
+  if (dry) return { current: CODE_VERSION, latest: latest, same: same };
+  if (same) return { current: CODE_VERSION, latest: latest, same: true };
+
+  var content = scriptApi_('get', '/content'), hasCode = false, hasCore = false;
+  var files = (content.files || []).map(function (f) {
+    var o = { name: f.name, type: f.type, source: f.source };
+    if (f.type === 'SERVER_JS' && isCodeFile_(f.source || '') && !hasCode) { o.source = code; hasCode = true; }
+    else if (f.type === 'SERVER_JS' && isCoreFile_(f.source || '') && !hasCore) { o.source = core; hasCore = true; }
+    return o;
+  });
+  if (!hasCode) throw apiError_('UPDATE', '프로젝트에서 Code 파일을 찾지 못했습니다.');
+  if (!hasCore) files.push({ name: 'Core', type: 'SERVER_JS', source: core });
+  scriptApi_('put', '/content', { files: files });
+  var stamp = Core.nowStr();
+  var ver = scriptApi_('post', '/versions', { description: '자동 업데이트 ' + stamp + ' (서버 코드 ' + latest + ')' }).versionNumber;
+  var deps = (scriptApi_('get', '/deployments').deployments || []).filter(function (d) {
+    var web = (d.entryPoints || []).some(function (e) { return e.entryPointType === 'WEB_APP'; });
+    return web && d.deploymentConfig && d.deploymentConfig.versionNumber;
+  });
+  deps.forEach(function (d) {
+    scriptApi_('put', '/deployments/' + d.deploymentId, { deploymentConfig: {
+      scriptId: ScriptApp.getScriptId(), versionNumber: ver, manifestFileName: d.deploymentConfig.manifestFileName || 'appsscript',
+      description: d.deploymentConfig.description || '' } });
+  });
+  p.setProperty('DEPLOYED_HASH', hash);
+  log_({ name: who || '관리자' }, '서버 코드 업데이트', '버전 ' + ver, '서버 코드 ' + CODE_VERSION + ' → ' + latest + ', 배포 ' + deps.length + '개');
+  return { current: CODE_VERSION, latest: latest, version: ver, deployments: deps.length, same: false };
+}
+
+API.serverUpdate = function (req, user) { return selfUpdate_(!!req.check, user.name); };
+
+/** 시트 메뉴: 서버 코드 최신으로 업데이트 */
+function updateServerCode() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var r = selfUpdate_(false, '시트 메뉴');
+    ui.alert(r.same ? '이미 최신 서버 코드입니다 (' + r.latest + ').' : '서버 코드를 ' + r.latest + '(으)로 업데이트하고 배포했습니다. 앱에서 Ctrl+Shift+R을 눌러 주세요.');
+  } catch (e) { ui.alert('업데이트하지 못했습니다.\n\n' + e.message); }
+}
+
+/** 처음 한 번: 편집기에서 이 함수를 실행해 자동 업데이트 권한을 허용합니다 */
+function prepareUpdate() {
+  scriptApi_('get', '/content');
+  var r = selfUpdate_(true);
+  console.log('자동 업데이트 준비 완료. 지금 서버 코드 ' + r.current + ', GitHub 최신 ' + r.latest);
+}
+
 /* ───────── 시트 메뉴·처음 설정 ───────── */
 
 function onOpen() {
@@ -866,6 +955,7 @@ function onOpen() {
     .addItem('초기 설정 (처음 한 번)', 'setupSheets')
     .addItem('오래된 연락처 지금 가리기', 'maskNow')
     .addItem('접속 코드 정하기', 'setCodeMenu')
+    .addItem('서버 코드 최신으로 업데이트', 'updateServerCode')
     .addItem('모든 기기에서 로그아웃', 'resetSessions')
     .addToUi();
 }
