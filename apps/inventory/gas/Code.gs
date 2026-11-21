@@ -879,10 +879,16 @@ function scriptApi_(method, path, body) {
   var r = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + path, opt);
   var code = r.getResponseCode(), txt = r.getContentText();
   if (code >= 300) {
-    if (/has not been used|is disabled|not enabled|SERVICE_DISABLED|User has not enabled the Apps Script API/i.test(txt)) {
-      throw apiError_('UPDATE_SETUP', 'Apps Script API가 꺼져 있습니다. script.google.com/home/usersettings 에서 [Google Apps Script API]를 켜고 몇 분 뒤 다시 해 주세요.');
+    var g = '';
+    try { g = (JSON.parse(txt).error || {}).message || ''; } catch (e) { g = txt.slice(0, 300); }
+    var why = ' [구글 원문 (' + code + '): ' + g + ']';
+    if (/User has not enabled the Apps Script API/i.test(txt)) {
+      throw apiError_('UPDATE_SETUP', 'Apps Script API가 꺼져 있습니다. script.google.com/home/usersettings 에서 [Google Apps Script API]를 켜고 몇 분 뒤 다시 해 주세요.' + why);
     }
-    if (code === 401 || code === 403) throw apiError_('UPDATE_SETUP', '자동 업데이트 권한이 없습니다. appsscript.json 에 권한 목록을 넣고, 편집기에서 prepareUpdate 를 한 번 실행해 [허용]을 눌러 주세요.');
+    if (/has not been used in project|SERVICE_DISABLED|is disabled/i.test(txt)) {
+      throw apiError_('UPDATE_SETUP', '이 스크립트의 구글 클라우드 프로젝트에서 Apps Script API가 꺼져 있습니다.' + why);
+    }
+    if (code === 401 || code === 403) throw apiError_('UPDATE_SETUP', '자동 업데이트 권한이 없습니다. appsscript.json 에 권한 목록을 넣고, 편집기에서 prepareUpdate 를 한 번 실행해 [허용]을 눌러 주세요.' + why);
     throw apiError_('UPDATE', 'Apps Script 프로젝트를 바꾸지 못했습니다 (' + code + '): ' + txt.slice(0, 300));
   }
   return txt ? JSON.parse(txt) : {};
